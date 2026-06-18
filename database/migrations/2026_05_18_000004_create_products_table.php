@@ -47,7 +47,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('store_id')->constrained('stores')->onDelete('cascade');
             $table->foreignId('variant_id')->constrained('product_variants')->onDelete('cascade');
-            $table->integer('stock')->default(0);
+            $table->unsignedInteger('stock')->default(0);
             $table->unsignedBigInteger('last_inventoried_by')->nullable();
             $table->timestamps();
 
@@ -63,23 +63,23 @@ return new class extends Migration
         foreach ($products as $p) {
             $exists = DB::select("SELECT id FROM products WHERE base_sku = ?", [$p['base_sku']]);
             if (empty($exists)) {
-                DB::insert("INSERT INTO products (base_sku, category_id, store_id, name, price, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())", [
-                    $p['base_sku'], $p['cat_id'], 1, $p['name'], $p['price'], 1, 1
+                DB::insert("INSERT INTO products (base_sku, category_id, store_id, name, price, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                    $p['base_sku'], $p['cat_id'], 1, $p['name'], $p['price'], 1, 1, now(), now()
                 ]);
                 $productId = DB::getPdo()->lastInsertId();
 
-                DB::insert("INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())", [
-                    $productId, $p['img'], 1
+                DB::insert("INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", [
+                    $productId, $p['img'], 1, now(), now()
                 ]);
 
                 foreach ($p['variants'] as $v) {
-                    DB::insert("INSERT INTO product_variants (product_id, sku, size, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())", [
-                        $productId, $v['sku'], $v['size']
+                    DB::insert("INSERT INTO product_variants (product_id, sku, size, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", [
+                        $productId, $v['sku'], $v['size'], now(), now()
                     ]);
                     $variantId = DB::getPdo()->lastInsertId();
 
-                    DB::insert("INSERT INTO store_inventories (store_id, variant_id, stock, last_inventoried_by, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())", [
-                        1, $variantId, $p['stock'], 1
+                    DB::insert("INSERT INTO store_inventories (store_id, variant_id, stock, last_inventoried_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", [
+                        1, $variantId, $p['stock'], 1, now(), now()
                     ]);
                 }
             }

@@ -24,11 +24,31 @@ class SaleController extends Controller
      */
     public function index(Request $request)
     {
+        $user = Auth::user();
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
         $page = (int) $request->query('page', 1);
         $perPage = (int) $request->query('per_page', 10);
         $search = $request->query('search', '');
 
-        $result = $this->saleRepo->getPaginated($page, $perPage, null, $search);
+        $sellerId = null;
+        if ($user->role_id == 2) {
+            $sellerId = $user->id; // Vendedores solo ven sus ventas
+        } elseif ($user->role_id == 1) {
+            if ($request->has('seller_id') && $request->query('seller_id') !== '') {
+                $sellerId = (int) $request->query('seller_id');
+            }
+        } else {
+            return response()->json(['success' => false, 'message' => 'Acceso denegado.'], 403);
+        }
+
+        $startDate = $request->query('start_date');
+        $endDate = $request->query('end_date');
+        $storeId = $request->query('store_id') ? (int) $request->query('store_id') : null;
+
+        $result = $this->saleRepo->getPaginated($page, $perPage, $storeId, $search, $sellerId, $startDate, $endDate);
 
         return response()->json([
             'success' => true,
@@ -38,6 +58,40 @@ class SaleController extends Controller
                 'current_page' => $result['current_page'],
                 'per_page' => $result['per_page'],
                 'last_page' => $result['last_page']
+            ]
+        ]);
+    }
+
+    /**
+     * Obtener estadísticas de ventas generales o filtradas.
+     */
+    public function stats(Request $request)
+    {
+        $user = Auth::user();
+        if (!$user || !in_array($user->role_id, [1, 2])) {
+            return response()->json(['success' => false, 'message' => 'Acceso denegado.'], 403);
+        }
+
+        $sellerId = null;
+        if ($user->role_id == 2) {
+            $sellerId = $user->id;
+        } elseif ($user->role_id == 1) {
+            if ($request->has('seller_id') && $request->query('seller_id') !== '') {
+                $sellerId = (int) $request->query('seller_id');
+            }
+        }
+
+        $startDate = $request->query('start_date');
+        $endDate = $request->query('end_date');
+        $storeId = $request->query('store_id') ? (int) $request->query('store_id') : null;
+
+        $stats = $this->saleRepo->getStats($storeId, $sellerId, $startDate, $endDate);
+
+        return response()->json([
+            'success' => true,
+            'stats' => [
+                'total_amount' => (float) $stats->total_amount,
+                'total_sales' => (int) $stats->total_sales
             ]
         ]);
     }

@@ -5,6 +5,7 @@ use App\Http\Controllers\ProductController;
 
 Route::get('/', [ProductController::class, 'index']);
 Route::get('all', [ProductController::class, 'all']);
+Route::get('best-sellers', [ProductController::class, 'bestSellers']);
 Route::get('{sku}', [ProductController::class, 'show']);
 
 Route::middleware(['auth:sanctum', 'admin'])->group(function () {

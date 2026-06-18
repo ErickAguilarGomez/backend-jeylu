@@ -24,13 +24,15 @@ return new class extends Migration
         });
 
         // Insert default Cloudinary credentials from user request
-        DB::insert("INSERT INTO cloudinary_configs (cloud_name, api_key, api_secret, is_active, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())", [
+        DB::insert("INSERT INTO cloudinary_configs (cloud_name, api_key, api_secret, is_active, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
             'dwbw7bwlk',
             '315239792191814',
             'tC6bULA_RgeoI9xE2c6pF1hXaN8',
             1,
             1,
-            1
+            1,
+            now(),
+            now()
         ]);
     }
 

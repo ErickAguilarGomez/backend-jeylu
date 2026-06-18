@@ -62,8 +62,10 @@ class CategoryController extends Controller
     public function update(Request $request, int $id)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
+            'name' => 'required|string|max:255|unique:categories,name,' . $id,
             'description' => 'nullable|string|max:500'
+        ], [
+            'name.unique' => 'El nombre de la categoría ya está registrado.'
         ]);
 
         $this->categoryRepo->update($id, $validated, Auth::id());

@@ -34,8 +34,8 @@ return new class extends Migration
         foreach ($categories as $cat) {
             $exists = DB::select("SELECT id FROM categories WHERE id = ?", [$cat['id']]);
             if (empty($exists)) {
-                DB::insert("INSERT INTO categories (id, name, description, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())", [
-                    $cat['id'], $cat['name'], $cat['desc'], 1, 1
+                DB::insert("INSERT INTO categories (id, name, description, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+                    $cat['id'], $cat['name'], $cat['desc'], 1, 1, now(), now()
                 ]);
             }
         }

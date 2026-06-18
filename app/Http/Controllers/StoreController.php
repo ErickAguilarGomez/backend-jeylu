@@ -43,12 +43,35 @@ class StoreController extends Controller
         ]);
     }
 
+    public function publicList()
+    {
+        $stores = $this->storeRepo->getAll();
+        
+        $publicStores = array_map(function($store) {
+            return [
+                'id' => $store->id,
+                'name' => $store->name,
+                'address' => $store->address,
+                'phone' => $store->phone,
+                'latitude' => $store->latitude ? (float) $store->latitude : null,
+                'longitude' => $store->longitude ? (float) $store->longitude : null,
+            ];
+        }, $stores);
+
+        return response()->json([
+            'success' => true,
+            'stores' => $publicStores
+        ]);
+    }
+
     public function store(Request $request)
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255|unique:stores',
             'address' => 'required|string|max:500',
-            'phone' => 'nullable|string|max:50'
+            'phone' => 'nullable|string|max:50',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180'
         ]);
 
         $store = $this->storeRepo->create($validated, Auth::id());
@@ -63,9 +86,13 @@ class StoreController extends Controller
     public function update(Request $request, int $id)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
+            'name' => 'required|string|max:255|unique:stores,name,' . $id,
             'address' => 'required|string|max:500',
-            'phone' => 'nullable|string|max:50'
+            'phone' => 'nullable|string|max:50',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180'
+        ], [
+            'name.unique' => 'El nombre de la tienda ya está registrado.'
         ]);
 
         $this->storeRepo->update($id, $validated, Auth::id());

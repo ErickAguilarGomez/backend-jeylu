@@ -14,7 +14,7 @@ class StoreRepository
 
         $countQuery = "SELECT COUNT(s.id) as total FROM stores s WHERE 1=1";
         $selectQuery = "
-            SELECT s.id, s.name, s.address, s.phone, s.created_at, u.name as created_by_name
+            SELECT s.id, s.name, s.address, s.phone, s.latitude, s.longitude, s.created_at, u.name as created_by_name
             FROM stores s
             LEFT JOIN users u ON s.created_by = u.id
             WHERE 1=1
@@ -48,7 +48,7 @@ class StoreRepository
     public function getAll()
     {
         return DB::select("
-            SELECT s.id, s.name, s.address, s.phone, s.created_at, u.name as created_by_name
+            SELECT s.id, s.name, s.address, s.phone, s.latitude, s.longitude, s.created_at, u.name as created_by_name
             FROM stores s
             LEFT JOIN users u ON s.created_by = u.id
             ORDER BY s.id ASC
@@ -63,18 +63,24 @@ class StoreRepository
 
     public function create(array $data, int $userId)
     {
-        DB::insert("INSERT INTO stores (name, address, phone, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())", [
-            $data['name'], $data['address'], $data['phone'] ?? null, $userId, $userId
+        DB::insert("INSERT INTO stores (name, address, phone, latitude, longitude, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())", [
+            $data['name'], $data['address'], $data['phone'] ?? null,
+            isset($data['latitude']) ? (float)$data['latitude'] : null,
+            isset($data['longitude']) ? (float)$data['longitude'] : null,
+            $userId, $userId
         ]);
 
-        $inserted = DB::select("SELECT * FROM stores WHERE name = ? ORDER BY id DESC LIMIT 1", [$data['name']]);
-        return $inserted[0] ?? null;
+        $id = DB::getPdo()->lastInsertId();
+        return $this->findById((int) $id);
     }
 
     public function update(int $id, array $data, int $userId)
     {
-        return DB::update("UPDATE stores SET name = ?, address = ?, phone = ?, updated_by = ?, updated_at = NOW() WHERE id = ?", [
-            $data['name'], $data['address'], $data['phone'] ?? null, $userId, $id
+        return DB::update("UPDATE stores SET name = ?, address = ?, phone = ?, latitude = ?, longitude = ?, updated_by = ?, updated_at = NOW() WHERE id = ?", [
+            $data['name'], $data['address'], $data['phone'] ?? null,
+            isset($data['latitude']) ? (float)$data['latitude'] : null,
+            isset($data['longitude']) ? (float)$data['longitude'] : null,
+            $userId, $id
         ]);
     }
 

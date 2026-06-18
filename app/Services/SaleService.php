@@ -20,6 +20,13 @@ class SaleService
         DB::beginTransaction();
 
         try {
+            if ($customerId && empty($customerName)) {
+                $user = DB::select("SELECT name FROM users WHERE id = ? LIMIT 1", [$customerId]);
+                if (!empty($user)) {
+                    $customerName = $user[0]->name;
+                }
+            }
+
             $total = 0.00;
             $processedItems = [];
 
@@ -39,7 +46,8 @@ class SaleService
                 }
                 $variant = $variant[0];
 
-                $storeStock = DB::select("SELECT * FROM store_inventories WHERE store_id = ? AND variant_id = ? FOR UPDATE", [$storeId, $variant->variant_id]);
+                $lockSql = DB::connection()->getDriverName() === 'sqlite' ? "" : " FOR UPDATE";
+                $storeStock = DB::select("SELECT * FROM store_inventories WHERE store_id = ? AND variant_id = ?" . $lockSql, [$storeId, $variant->variant_id]);
                 
                 if (empty($storeStock)) {
                     throw new Exception("Product {$variant->name} (SKU: {$variantSku}) is not assigned to this store.");

@@ -20,10 +20,13 @@ class UserRepository
             WHERE 1=1
         ";
         $selectQuery = "
-            SELECT u.id, u.name, u.email, u.role_id, r.name as role_name, u.created_at, u2.name as created_by_name
+            SELECT u.id, u.name, u.email, u.role_id, r.name as role_name, u.created_at, u2.name as created_by_name,
+                   su.store_id, s.name as store_name
             FROM users u
             INNER JOIN roles r ON u.role_id = r.id
             LEFT JOIN users u2 ON u.created_by = u2.id
+            LEFT JOIN store_user su ON u.id = su.user_id AND su.is_primary = 1
+            LEFT JOIN stores s ON su.store_id = s.id
             WHERE 1=1
         ";
 
@@ -55,10 +58,13 @@ class UserRepository
     public function getAll()
     {
         return DB::select("
-            SELECT u.id, u.name, u.email, u.role_id, r.name as role_name, u.created_at, u2.name as created_by_name
+            SELECT u.id, u.name, u.email, u.role_id, r.name as role_name, u.created_at, u2.name as created_by_name,
+                   su.store_id, s.name as store_name
             FROM users u
             INNER JOIN roles r ON u.role_id = r.id
             LEFT JOIN users u2 ON u.created_by = u2.id
+            LEFT JOIN store_user su ON u.id = su.user_id AND su.is_primary = 1
+            LEFT JOIN stores s ON su.store_id = s.id
             ORDER BY u.id ASC
         ");
     }
@@ -76,8 +82,8 @@ class UserRepository
             $data['role_id'], $data['name'], $data['email'], $hashed, $creatorId, $creatorId
         ]);
 
-        $inserted = DB::select("SELECT * FROM users WHERE email = ?", [$data['email']]);
-        return $inserted[0] ?? null;
+        $id = DB::getPdo()->lastInsertId();
+        return $this->findById((int) $id);
     }
 
     public function update(int $id, array $data, int $updaterId)

@@ -41,16 +41,16 @@ return new class extends Migration
         $existsAdmin = DB::select("SELECT id FROM users WHERE email = ?", ['admin@jeilu.com']);
         if (empty($existsAdmin)) {
             $hashedPassword = Hash::make('Jeilu2026!');
-            DB::insert("INSERT INTO users (id, role_id, name, email, password, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())", [
-                1, 1, 'Administrador JEILU', 'admin@jeilu.com', $hashedPassword, 1, 1
+            DB::insert("INSERT INTO users (id, role_id, name, email, password, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                1, 1, 'Administrador JEILU', 'admin@jeilu.com', $hashedPassword, 1, 1, now(), now()
             ]);
         }
 
         $existsSeller = DB::select("SELECT id FROM users WHERE email = ?", ['vendedor@jeilu.com']);
         if (empty($existsSeller)) {
             $hashedPassword = Hash::make('Vendedor2026!');
-            DB::insert("INSERT INTO users (id, role_id, name, email, password, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())", [
-                2, 2, 'Vendedor POS JEILU', 'vendedor@jeilu.com', $hashedPassword, 1, 1
+            DB::insert("INSERT INTO users (id, role_id, name, email, password, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                2, 2, 'Vendedor POS JEILU', 'vendedor@jeilu.com', $hashedPassword, 1, 1, now(), now()
             ]);
         }
     }

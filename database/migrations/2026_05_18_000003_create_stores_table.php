@@ -41,16 +41,16 @@ return new class extends Migration
         // Insertar la primera Tienda Principal JEILU
         $exists = DB::select("SELECT id FROM stores WHERE id = ?", [1]);
         if (empty($exists)) {
-            DB::insert("INSERT INTO stores (id, name, address, phone, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())", [
-                1, 'Tienda Principal JEILU (Central)', 'Av. Conquistadores 1240, San Isidro', '+51 1 4219999', 1, 1
+            DB::insert("INSERT INTO stores (id, name, address, phone, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
+                1, 'Tienda Central JEILU (Central)', 'Av. Conquistadores 1240, San Isidro', '+51 1 4219999', 1, 1, now(), now()
             ]);
 
             // Asignar al Admin y al Vendedor a la tienda principal
-            DB::insert("INSERT INTO store_user (store_id, user_id, is_primary, assigned_by, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())", [
-                1, 1, 1, 1
+            DB::insert("INSERT INTO store_user (store_id, user_id, is_primary, assigned_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", [
+                1, 1, 1, 1, now(), now()
             ]);
-            DB::insert("INSERT INTO store_user (store_id, user_id, is_primary, assigned_by, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())", [
-                1, 2, 1, 1
+            DB::insert("INSERT INTO store_user (store_id, user_id, is_primary, assigned_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", [
+                1, 2, 1, 1, now(), now()
             ]);
         }
     }

@@ -48,7 +48,8 @@ class CategoryRepository
     public function getAll()
     {
         return DB::select("
-            SELECT c.id, c.name, c.description, c.created_at, u.name as created_by_name
+            SELECT c.id, c.name, c.description, c.created_at, u.name as created_by_name,
+                   (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id) as products_count
             FROM categories c
             LEFT JOIN users u ON c.created_by = u.id
             ORDER BY c.name ASC
@@ -67,8 +68,8 @@ class CategoryRepository
             $data['name'], $data['description'] ?? null, $userId, $userId
         ]);
 
-        $inserted = DB::select("SELECT * FROM categories WHERE name = ? ORDER BY id DESC LIMIT 1", [$data['name']]);
-        return $inserted[0] ?? null;
+        $id = DB::getPdo()->lastInsertId();
+        return $this->findById((int) $id);
     }
 
     public function update(int $id, array $data, int $userId)

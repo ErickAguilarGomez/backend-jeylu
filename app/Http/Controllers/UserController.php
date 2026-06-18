@@ -31,9 +31,13 @@ class UserController extends Controller
 
         if ($request->has('all')) {
             $users = $this->userRepo->getAll();
+            // Only return customers (role_id = 3) to prevent selecting admins/sellers
+            $customers = array_values(array_filter($users, function($u) {
+                return (int)$u->role_id === 3;
+            }));
             return response()->json([
                 'success' => true,
-                'users' => $users
+                'users' => $customers
             ]);
         }
 
@@ -53,14 +57,30 @@ class UserController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
+        $rules = [
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255|unique:users',
             'password' => 'required|string|min:6',
             'role_id' => 'required|integer|exists:roles,id'
+        ];
+
+        if ($request->input('role_id') == 2) {
+            $rules['store_id'] = 'required|integer|exists:stores,id';
+        } else {
+            $rules['store_id'] = 'nullable|integer|exists:stores,id';
+        }
+
+        $validated = $request->validate($rules, [
+            'store_id.required' => 'La sucursal es obligatoria para usuarios con el rol de Cajero.',
+            'store_id.exists' => 'La sucursal seleccionada no es válida.'
         ]);
 
         $user = $this->userRepo->create($validated, Auth::id());
+
+        if (!empty($validated['store_id'])) {
+            $storeRepo = app(\App\Repositories\StoreRepository::class);
+            $storeRepo->assignUser($validated['store_id'], $user->id, true, Auth::id());
+        }
 
         return response()->json([
             'success' => true,
@@ -71,14 +91,30 @@ class UserController extends Controller
 
     public function update(Request $request, int $id)
     {
-        $validated = $request->validate([
+        $rules = [
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255',
+            'email' => 'required|email|max:255|unique:users,email,' . $id,
             'password' => 'nullable|string|min:6',
             'role_id' => 'required|integer|exists:roles,id'
+        ];
+
+        if ($request->input('role_id') == 2) {
+            $rules['store_id'] = 'required|integer|exists:stores,id';
+        } else {
+            $rules['store_id'] = 'nullable|integer|exists:stores,id';
+        }
+
+        $validated = $request->validate($rules, [
+            'store_id.required' => 'La sucursal es obligatoria para usuarios con el rol de Cajero.',
+            'store_id.exists' => 'La sucursal seleccionada no es válida.'
         ]);
 
         $this->userRepo->update($id, $validated, Auth::id());
+
+        if (!empty($validated['store_id'])) {
+            $storeRepo = app(\App\Repositories\StoreRepository::class);
+            $storeRepo->assignUser($validated['store_id'], $id, true, Auth::id());
+        }
 
         return response()->json([
             'success' => true,

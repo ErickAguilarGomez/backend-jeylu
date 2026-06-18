@@ -3,6 +3,8 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\StoreController;
 
+Route::get('public', [StoreController::class, 'publicList']);
+
 Route::middleware(['auth:sanctum', 'admin'])->group(function () {
     Route::get('/', [StoreController::class, 'index']);
     Route::post('/', [StoreController::class, 'store']);

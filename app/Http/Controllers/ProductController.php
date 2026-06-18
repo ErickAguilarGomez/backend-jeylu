@@ -39,6 +39,17 @@ class ProductController extends Controller
         return !empty($storeUser) ? $storeUser[0]->store_id : null;
     }
 
+    private function formatProducts(array $products, bool $keepStock = false): array
+    {
+        foreach ($products as $item) {
+            $item->is_available = (bool) $item->is_available;
+            if (!$keepStock && property_exists($item, 'total_stock')) {
+                unset($item->total_stock);
+            }
+        }
+        return $products;
+    }
+
     public function index(Request $request)
     {
         $page = (int) $request->query('page', 1);
@@ -46,17 +57,13 @@ class ProductController extends Controller
         $search = $request->query('search', '');
         
         $storeId = $this->getStoreIdIfSeller();
+        $categoryId = $request->query('category_id') ? (int) $request->query('category_id') : null;
 
-        $result = $this->productRepo->getPaginated($page, $perPage, $search, $storeId);
-
-        foreach ($result['data'] as $item) {
-            $item->is_available = (bool) $item->is_available;
-            unset($item->total_stock);
-        }
+        $result = $this->productRepo->getPaginated($page, $perPage, $search, $storeId, $categoryId);
 
         return response()->json([
             'success' => true,
-            'data' => $result['data'],
+            'data' => $this->formatProducts($result['data'], false),
             'meta' => [
                 'total' => $result['total'],
                 'current_page' => $result['current_page'],
@@ -73,26 +80,36 @@ class ProductController extends Controller
         $search = $request->query('search', '');
         
         $storeId = $request->query('store_id', $this->getStoreIdIfSeller());
+        $categoryId = $request->query('category_id') ? (int) $request->query('category_id') : null;
 
         if ($request->has('nopaginate')) {
-            $products = $this->productRepo->getAll($storeId ? (int) $storeId : null);
+            $products = $this->productRepo->getAll($storeId ? (int) $storeId : null, $categoryId);
             return response()->json([
                 'success' => true,
-                'data' => $products
+                'data' => $this->formatProducts($products, true)
             ]);
         }
 
-        $result = $this->productRepo->getPaginated($page, $perPage, $search, $storeId ? (int) $storeId : null);
+        $result = $this->productRepo->getPaginated($page, $perPage, $search, $storeId ? (int) $storeId : null, $categoryId);
 
         return response()->json([
             'success' => true,
-            'data' => $result['data'],
+            'data' => $this->formatProducts($result['data'], true),
             'meta' => [
                 'total' => $result['total'],
                 'current_page' => $result['current_page'],
                 'per_page' => $result['per_page'],
                 'last_page' => $result['last_page']
             ]
+        ]);
+    }
+
+    public function bestSellers(Request $request)
+    {
+        $products = $this->productRepo->getBestSellers();
+        return response()->json([
+            'success' => true,
+            'data' => $this->formatProducts($products, true)
         ]);
     }
 
@@ -136,8 +153,8 @@ class ProductController extends Controller
     {
         $validated = $request->validate([
             'base_sku' => ['required', 'string', 'max:100'],
-            'category_id' => ['required', 'integer'],
-            'store_id' => ['required', 'integer'],
+            'category_id' => ['required', 'integer', 'exists:categories,id'],
+            'store_id' => ['required', 'integer', 'exists:stores,id'],
             'name' => ['required', 'string', 'max:255'],
             'price' => ['required', 'numeric', 'min:0'],
             'description' => ['nullable', 'string'],
@@ -146,6 +163,7 @@ class ProductController extends Controller
             'image_urls' => ['nullable', 'array'],
             'image_urls.*' => ['nullable', 'string'],
             'variants' => ['required', 'array', 'min:1'],
+            'variants.*.sku' => ['nullable', 'string', 'max:100'],
             'variants.*.size' => ['nullable', 'string', 'max:50'],
             'variants.*.color' => ['nullable', 'string', 'max:50'],
             'variants.*.stock' => ['required', 'integer', 'min:0']
@@ -163,7 +181,7 @@ class ProductController extends Controller
         
         if ($request->hasFile('images')) {
             foreach ($request->file('images') as $index => $file) {
-                $url = $this->cloudinaryService->upload($file->getPathname(), 'ecommerce_products');
+                $url = $this->cloudinaryService->upload($file, 'ecommerce_products');
                 $processedImages[] = [
                     'url' => $url,
                     'is_primary' => count($processedImages) === 0
@@ -187,15 +205,19 @@ class ProductController extends Controller
             $size = $v['size'] ?? null;
             $color = $v['color'] ?? null;
             
-            $suffix = [];
-            if ($size) $suffix[] = strtoupper($size);
-            if ($color) $suffix[] = strtoupper($color);
-            
-            $variantSku = $validated['base_sku'];
-            if (!empty($suffix)) {
-                $variantSku .= '-' . implode('-', $suffix);
+            if (!empty($v['sku'])) {
+                $variantSku = strtoupper($v['sku']);
             } else {
-                $variantSku .= '-' . ($index + 1);
+                $suffix = [];
+                if ($size) $suffix[] = strtoupper($size);
+                if ($color) $suffix[] = strtoupper($color);
+                
+                $variantSku = $validated['base_sku'];
+                if (!empty($suffix)) {
+                    $variantSku .= '-' . implode('-', $suffix);
+                } else {
+                    $variantSku .= '-' . ($index + 1);
+                }
             }
 
             $processedVariants[] = [
@@ -239,8 +261,8 @@ class ProductController extends Controller
         }
 
         $validated = $request->validate([
-            'category_id' => ['required', 'integer'],
-            'store_id' => ['required', 'integer'],
+            'category_id' => ['required', 'integer', 'exists:categories,id'],
+            'store_id' => ['required', 'integer', 'exists:stores,id'],
             'name' => ['required', 'string', 'max:255'],
             'price' => ['required', 'numeric', 'min:0'],
             'description' => ['nullable', 'string'],
@@ -250,6 +272,7 @@ class ProductController extends Controller
             'image_urls.*' => ['nullable', 'string'],
             'variants' => ['required', 'array', 'min:1'],
             'variants.*.id' => ['nullable', 'integer'],
+            'variants.*.sku' => ['nullable', 'string', 'max:100'],
             'variants.*.size' => ['nullable', 'string', 'max:50'],
             'variants.*.color' => ['nullable', 'string', 'max:50'],
             'variants.*.stock' => ['required', 'integer', 'min:0']
@@ -259,7 +282,7 @@ class ProductController extends Controller
         if ($request->hasFile('images')) {
             $hasPrimary = DB::select("SELECT id FROM product_images WHERE product_id = ? AND is_primary = 1", [$product->id]);
             foreach ($request->file('images') as $file) {
-                $url = $this->cloudinaryService->upload($file->getPathname(), 'ecommerce_products');
+                $url = $this->cloudinaryService->upload($file, 'ecommerce_products');
                 DB::insert("
                     INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at)
                     VALUES (?, ?, ?, NOW(), NOW())
@@ -289,15 +312,19 @@ class ProductController extends Controller
             $size = $v['size'] ?? null;
             $color = $v['color'] ?? null;
             
-            $suffix = [];
-            if ($size) $suffix[] = strtoupper($size);
-            if ($color) $suffix[] = strtoupper($color);
-            
-            $variantSku = $baseSku;
-            if (!empty($suffix)) {
-                $variantSku .= '-' . implode('-', $suffix);
+            if (!empty($v['sku'])) {
+                $variantSku = strtoupper($v['sku']);
             } else {
-                $variantSku .= '-' . ($index + 1);
+                $suffix = [];
+                if ($size) $suffix[] = strtoupper($size);
+                if ($color) $suffix[] = strtoupper($color);
+                
+                $variantSku = $baseSku;
+                if (!empty($suffix)) {
+                    $variantSku .= '-' . implode('-', $suffix);
+                } else {
+                    $variantSku .= '-' . ($index + 1);
+                }
             }
 
             $processedVariants[] = [
@@ -337,13 +364,23 @@ class ProductController extends Controller
             ], 404);
         }
 
+        try {
+            DB::beginTransaction();
+            $this->productRepo->delete($sku);
+            DB::commit();
+        } catch (Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'No se puede eliminar el producto porque tiene ventas asociadas.'
+            ], 400);
+        }
+
         if (!empty($product->images)) {
             foreach ($product->images as $img) {
                 $this->cloudinaryService->delete($img->image_url);
             }
         }
-
-        $this->productRepo->delete($sku);
 
         return response()->json([
             'success' => true,

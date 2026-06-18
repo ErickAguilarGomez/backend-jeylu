@@ -36,8 +36,10 @@ class CloudinaryService
         }
     }
 
-    public function upload($filePath, string $folder = 'ecommerce'): string
+    public function upload($file, string $folder = 'ecommerce'): string
     {
+        $filePath = is_string($file) ? $file : $file->getRealPath();
+
         if ($this->cloudinary !== null) {
             try {
                 $result = $this->cloudinary->uploadApi()->upload($filePath, [
@@ -49,11 +51,21 @@ class CloudinaryService
             }
         }
 
-        $fileName = uniqid() . '_' . basename($filePath);
-        $destination = "public/" . $folder . "/" . $fileName;
+        $extension = 'jpg';
+        if (!is_string($file) && method_exists($file, 'getClientOriginalExtension')) {
+            $extension = $file->getClientOriginalExtension();
+        } else {
+            $pathExt = pathinfo($filePath, PATHINFO_EXTENSION);
+            if ($pathExt && $pathExt !== 'tmp') {
+                $extension = $pathExt;
+            }
+        }
+
+        $fileName = uniqid() . '.' . $extension;
+        $destination = $folder . "/" . $fileName;
 
         if (file_exists($filePath)) {
-            Storage::put($destination, file_get_contents($filePath));
+            Storage::disk('public')->put($destination, file_get_contents($filePath));
         }
 
         return url("storage/" . $folder . "/" . $fileName);

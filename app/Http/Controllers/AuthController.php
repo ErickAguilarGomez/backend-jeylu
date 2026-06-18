@@ -113,14 +113,11 @@ class AuthController extends Controller
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255'],
+            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:6'],
+        ], [
+            'email.unique' => 'El correo electrónico ya está registrado.'
         ]);
-
-        $existing = DB::select("SELECT id FROM users WHERE email = ?", [$validated['email']]);
-        if (!empty($existing)) {
-            return response()->json(['success' => false, 'message' => 'El correo electrónico ya está registrado.'], 422);
-        }
 
         $roleId = 3; // Siempre registrar como Usuario (Cliente) por defecto
         $hashed = Hash::make($validated['password']);
