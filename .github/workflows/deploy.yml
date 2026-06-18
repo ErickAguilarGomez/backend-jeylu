@@ -1,0 +1,23 @@
+name: Deploy Backend to cPanel
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 🚀 Pull y Artisan por SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          cd /home/${{ secrets.SSH_USER }}/backend
+          git pull origin master
+          composer install --no-dev --optimize-autoloader
+          php artisan migrate --force
+          php artisan optimize
