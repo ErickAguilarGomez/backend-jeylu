@@ -264,14 +264,15 @@ class EcommerceApiTest extends TestCase
         $seller = User::where('role_id', 2)->first();
 
         // Setup product variant with stock via direct DB inserts (no auth switching)
-        DB::insert("INSERT INTO products (id, base_sku, category_id, store_id, name, price, created_at, updated_at) VALUES (100, 'SHOE-SAMBA', 1, 1, 'Samba Classic', 350.00, now(), now())");
-        DB::insert("INSERT INTO product_variants (id, product_id, sku, size, created_at, updated_at) VALUES (100, 100, 'SHOE-SAMBA-42-BLANCO', '42', now(), now())");
-        DB::insert("INSERT INTO store_inventories (store_id, variant_id, stock, created_at, updated_at) VALUES (1, 100, 5, now(), now())");
+        $timestamp = now();
+        DB::insert("INSERT INTO products (id, base_sku, category_id, store_id, name, price, created_at, updated_at) VALUES (100, 'SHOE-SAMBA', 1, 1, 'Samba Classic', 350.00, ?, ?)", [$timestamp, $timestamp]);
+        DB::insert("INSERT INTO product_variants (id, product_id, sku, size, created_at, updated_at) VALUES (100, 100, 'SHOE-SAMBA-42-BLANCO', '42', ?, ?)", [$timestamp, $timestamp]);
+        DB::insert("INSERT INTO store_inventories (store_id, variant_id, stock, created_at, updated_at) VALUES (1, 100, 5, ?, ?)", [$timestamp, $timestamp]);
 
         // First assign seller to store (if not already assigned)
         $exists = DB::select("SELECT id FROM store_user WHERE store_id = 1 AND user_id = ?", [$seller->id]);
         if (empty($exists)) {
-            DB::insert("INSERT INTO store_user (store_id, user_id, is_primary, assigned_by, created_at, updated_at) VALUES (1, ?, 1, 1, now(), now())", [$seller->id]);
+            DB::insert("INSERT INTO store_user (store_id, user_id, is_primary, assigned_by, created_at, updated_at) VALUES (1, ?, 1, 1, ?, ?)", [$seller->id, $timestamp, $timestamp]);
         }
 
         // As Seller: Should be able to list sales (which will be empty for seller)

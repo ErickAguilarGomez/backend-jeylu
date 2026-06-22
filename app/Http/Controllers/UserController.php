@@ -31,13 +31,23 @@ class UserController extends Controller
 
         if ($request->has('all')) {
             $users = $this->userRepo->getAll();
-            // Only return customers (role_id = 3) to prevent selecting admins/sellers
-            $customers = array_values(array_filter($users, function($u) {
-                return (int)$u->role_id === 3;
-            }));
+            
+            $roleId = $request->has('role_id') ? (int) $request->query('role_id') : 3;
+            $unassignedOnly = $request->query('unassigned') == 1;
+
+            $filtered = array_filter($users, function($u) use ($roleId, $unassignedOnly) {
+                if ((int)$u->role_id !== $roleId) {
+                    return false;
+                }
+                if ($unassignedOnly) {
+                    return empty($u->store_id);
+                }
+                return true;
+            });
+
             return response()->json([
                 'success' => true,
-                'users' => $customers
+                'users' => array_values($filtered)
             ]);
         }
 
