@@ -111,7 +111,7 @@ class ProductRepository
             $params[] = "%$search%";
         }
 
-        $selectQuery .= " GROUP BY p.id ORDER BY p.id DESC LIMIT ? OFFSET ?";
+        $selectQuery .= " GROUP BY p.id, p.category_id, p.store_id, p.base_sku, p.name, p.price ORDER BY p.id DESC LIMIT ? OFFSET ?";
         $params[] = $perPage;
         $params[] = $offset;
 
@@ -162,7 +162,7 @@ class ProductRepository
                    ), 0) as total_stock
             FROM products p 
             $whereSql
-            GROUP BY p.id
+            GROUP BY p.id, p.category_id, p.store_id, p.base_sku, p.name, p.price
             ORDER BY p.id DESC
         ", $params);
     }
