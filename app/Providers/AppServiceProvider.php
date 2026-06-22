@@ -27,17 +27,5 @@ class AppServiceProvider extends ServiceProvider
                 ['SystemRoot', 'SystemDrive', 'Path', 'TEMP', 'TMP', 'windir', 'COMSPEC', 'ComSpec']
             );
         }
-
-        \Illuminate\Support\Facades\Event::listen(
-            \Illuminate\Database\Events\ConnectionEstablished::class,
-            function ($event) {
-                $connection = $event->connection;
-                if ($connection->getDriverName() === 'sqlite') {
-                    $connection->getPdo()->sqliteCreateFunction('NOW', function () {
-                        return date('Y-m-d H:i:s');
-                    });
-                }
-            }
-        );
     }
 }
