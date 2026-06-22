@@ -406,6 +406,11 @@ class ProductRepository
 
     public function getBestSellers()
     {
+        $totalProducts = DB::select("SELECT COUNT(*) as total FROM products")[0]->total;
+        if ($totalProducts == 0) {
+            return [];
+        }
+
         $bestSellers = DB::select("
             SELECT p.id, p.category_id, p.store_id, p.base_sku as sku, p.name, p.price,
                    (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
@@ -425,7 +430,7 @@ class ProductRepository
             FROM products p
             INNER JOIN product_variants pv ON p.id = pv.product_id
             INNER JOIN sale_items si ON si.variant_id = pv.id
-            GROUP BY p.id
+            GROUP BY p.id, p.category_id, p.store_id, p.base_sku, p.name, p.price
             ORDER BY total_sales DESC
             LIMIT 10
         ");
