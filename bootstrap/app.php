@@ -1,5 +1,17 @@
 <?php
 
+if (!function_exists('request_parse_body')) {
+    function request_parse_body(): array {
+        $post = [];
+        $files = [];
+        $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+        if (str_contains($contentType, 'application/x-www-form-urlencoded')) {
+            parse_str(file_get_contents('php://input'), $post);
+        }
+        return [$post, $files];
+    }
+}
+
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
