@@ -443,9 +443,6 @@ class ProductRepository
         $needed = 10 - count($bestSellers);
         $excludeIds = array_map(function($p) { return $p->id; }, $bestSellers);
         
-        $driver = DB::connection()->getDriverName();
-        $randomOrder = $driver === 'sqlite' ? 'RANDOM()' : 'RAND()';
-
         $excludeClause = '';
         $params = [];
         if (!empty($excludeIds)) {
@@ -472,7 +469,7 @@ class ProductRepository
                    0 as total_sales
             FROM products p
             WHERE 1=1 $excludeClause
-            ORDER BY $randomOrder
+            ORDER BY RAND()
             LIMIT $needed
         ", $params);
 
