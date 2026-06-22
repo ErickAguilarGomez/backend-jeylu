@@ -49,6 +49,7 @@ class AuthController extends Controller
                     'role_name' => $role,
                     'primary_store' => $primaryStore
                 ],
+                'token' => csrf_token(),
                 'message' => 'Sesión iniciada con éxito.'
             ]);
         }

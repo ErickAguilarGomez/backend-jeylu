@@ -37,7 +37,14 @@ class EcommerceApiTest extends TestCase
         ]);
         $response->assertStatus(200)
                  ->assertJsonPath('success', true)
-                 ->assertJsonStructure(['success', 'user' => ['id', 'name', 'email', 'role_id']]);
+                 ->assertJsonStructure(['success', 'user' => ['id', 'name', 'email', 'role_id'], 'token']);
+    }
+
+    public function test_csrf_token_endpoint()
+    {
+        $response = $this->getJson('/api/auth/csrf-token');
+        $response->assertStatus(200)
+                 ->assertJsonStructure(['token']);
     }
 
     // public function test_auth_registration_with_email_uniqueness()
