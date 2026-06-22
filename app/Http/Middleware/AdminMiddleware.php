@@ -12,7 +12,7 @@ class AdminMiddleware
     {
         $user = Auth::user();
         
-        if (!$user || $user->role_id !== 1) {
+        if (!$user || (int)$user->role_id !== 1) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acceso denegado. Se requieren privilegios de Administrador para realizar esta acción.'
