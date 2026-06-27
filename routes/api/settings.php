@@ -3,6 +3,14 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SocialMediaController;
 
+// Test route to diagnose server routing without database queries
+Route::get('test-settings', function() {
+    return response()->json([
+        'success' => true,
+        'message' => 'Settings routing is working correctly!'
+    ]);
+});
+
 // Public route to fetch active social media settings
 Route::get('external-links', [SocialMediaController::class, 'index']);
 
