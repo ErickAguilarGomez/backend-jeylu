@@ -12,15 +12,15 @@ Route::get('test-settings', function() {
 });
 
 // Public route to fetch active social media settings
-Route::get('external-links', [SocialMediaController::class, 'index']);
+Route::get('links', [SocialMediaController::class, 'index']);
 
 // Admin-only route to update configurations
 Route::middleware(['auth:sanctum', 'admin'])->group(function () {
     
     // Admin social media management
-    Route::get('external-links/admin', [SocialMediaController::class, 'adminIndex']);
-    Route::post('external-links', [SocialMediaController::class, 'store']);
-    Route::put('external-links/{id}', [SocialMediaController::class, 'update']);
-    Route::delete('external-links/{id}', [SocialMediaController::class, 'destroy']);
-    Route::post('external-links/sort', [SocialMediaController::class, 'sort']);
+    Route::get('links/admin', [SocialMediaController::class, 'adminIndex']);
+    Route::post('links', [SocialMediaController::class, 'store']);
+    Route::put('links/{id}', [SocialMediaController::class, 'update']);
+    Route::delete('links/{id}', [SocialMediaController::class, 'destroy']);
+    Route::post('links/sort', [SocialMediaController::class, 'sort']);
 });
