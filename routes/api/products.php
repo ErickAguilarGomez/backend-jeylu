@@ -13,4 +13,5 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function () {
     Route::post('/', [ProductController::class, 'store']);
     Route::post('{sku}', [ProductController::class, 'update']);
     Route::delete('{sku}', [ProductController::class, 'destroy']);
+    Route::post('{sku}/restore', [ProductController::class, 'restore']);
 });

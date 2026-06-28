@@ -44,11 +44,13 @@ class SaleRepository
                    s.total as total_amount,
                    st.name as store_name,
                    seller.name as seller_name, 
-                   customer.name as customer_account_name
+                   customer.name as customer_account_name,
+                   modifier.name as modifier_name
             FROM sales s 
             INNER JOIN stores st ON s.store_id = st.id
             INNER JOIN users seller ON s.seller_id = seller.id
             LEFT JOIN users customer ON s.customer_id = customer.id
+            LEFT JOIN users modifier ON s.updated_by = modifier.id
             WHERE 1=1
         ";
         $params = [];
@@ -104,7 +106,10 @@ class SaleRepository
 
     public function getStats(?int $storeId = null, ?int $sellerId = null, ?string $startDate = null, ?string $endDate = null)
     {
-        $query = "SELECT COALESCE(SUM(total), 0) as total_amount, COUNT(*) as total_sales FROM sales WHERE 1=1";
+        $query = "SELECT COALESCE(SUM(total), 0) as total_amount, 
+                         COALESCE(SUM(commission_amount), 0) as total_commission,
+                         COUNT(*) as total_sales 
+                  FROM sales WHERE status IN ('COMPLETED', 'EXCHANGED')";
         $params = [];
 
         if ($storeId) {
@@ -125,28 +130,31 @@ class SaleRepository
         }
 
         $result = DB::select($query, $params);
-        return !empty($result) ? $result[0] : (object)['total_amount' => 0.00, 'total_sales' => 0];
+        return !empty($result) ? $result[0] : (object)['total_amount' => 0.00, 'total_commission' => 0.00, 'total_sales' => 0];
     }
 
-    public function persistSaleAndReduceStock(int $storeId, int $sellerId, ?int $customerId, ?string $customerName, float $total, array $processedItems): int
+    public function persistSaleAndReduceStock(int $storeId, int $sellerId, ?int $customerId, ?string $customerName, float $total, array $processedItems, float $commissionPercentage = 0.00, float $commissionAmount = 0.00): int
     {
+        $now = now();
         DB::insert("
-            INSERT INTO sales (store_id, seller_id, customer_id, customer_name, total, status, created_at, updated_at) 
-            VALUES (?, ?, ?, ?, ?, 'COMPLETED', NOW(), NOW())
-        ", [$storeId, $sellerId, $customerId, $customerName, $total]);
+            INSERT INTO sales (store_id, seller_id, customer_id, customer_name, total, commission_percentage, commission_amount, status, created_at, updated_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
+        ", [$storeId, $sellerId, $customerId, $customerName, $total, $commissionPercentage, $commissionAmount, $now, $now]);
         
         $saleId = (int) DB::getPdo()->lastInsertId();
 
         foreach ($processedItems as $pItem) {
             DB::insert("
                 INSERT INTO sale_items (sale_id, variant_id, quantity, price, subtotal, created_at, updated_at) 
-                VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             ", [
                 $saleId,
                 $pItem['variant_id'],
                 $pItem['quantity'],
                 $pItem['price'],
-                $pItem['subtotal']
+                $pItem['subtotal'],
+                $now,
+                $now
             ]);
 
             // Database level safe decrement to prevent negative stock in case of race conditions

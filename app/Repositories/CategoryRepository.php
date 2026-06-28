@@ -64,8 +64,9 @@ class CategoryRepository
 
     public function create(array $data, int $userId)
     {
-        DB::insert("INSERT INTO categories (name, description, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())", [
-            $data['name'], $data['description'] ?? null, $userId, $userId
+        $timestamp = now();
+        DB::insert("INSERT INTO categories (name, description, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", [
+            $data['name'], $data['description'] ?? null, $userId, $userId, $timestamp, $timestamp
         ]);
 
         $id = DB::getPdo()->lastInsertId();
@@ -74,8 +75,8 @@ class CategoryRepository
 
     public function update(int $id, array $data, int $userId)
     {
-        return DB::update("UPDATE categories SET name = ?, description = ?, updated_by = ?, updated_at = NOW() WHERE id = ?", [
-            $data['name'], $data['description'] ?? null, $userId, $id
+        return DB::update("UPDATE categories SET name = ?, description = ?, updated_by = ?, updated_at = ? WHERE id = ?", [
+            $data['name'], $data['description'] ?? null, $userId, now(), $id
         ]);
     }
 

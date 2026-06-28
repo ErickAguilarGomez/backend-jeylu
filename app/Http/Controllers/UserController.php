@@ -157,4 +157,58 @@ class UserController extends Controller
             'roles' => $roles
         ]);
     }
+
+    public function getSellersCommissions(Request $request)
+    {
+        $users = \Illuminate\Support\Facades\DB::select("
+            SELECT u.id, u.name, u.email, u.commission_percentage,
+                   s.name as store_name
+            FROM users u
+            LEFT JOIN store_user su ON u.id = su.user_id AND su.is_primary = 1
+            LEFT JOIN stores s ON su.store_id = s.id
+            WHERE u.role_id = 2
+            ORDER BY u.name ASC
+        ");
+
+        return response()->json([
+            'success' => true,
+            'data' => $users
+        ]);
+    }
+
+    public function updateSellerCommission(Request $request, int $id)
+    {
+        $validated = $request->validate([
+            'commission_percentage' => ['required', 'numeric', 'min:0', 'max:100']
+        ], [
+            'commission_percentage.required' => 'El porcentaje de comisión es obligatorio.',
+            'commission_percentage.numeric' => 'El porcentaje debe ser un valor numérico.',
+            'commission_percentage.min' => 'El porcentaje no puede ser menor a 0%.',
+            'commission_percentage.max' => 'El porcentaje no puede ser mayor a 100%.'
+        ]);
+
+        $user = \Illuminate\Support\Facades\DB::select("SELECT id, role_id FROM users WHERE id = ? LIMIT 1", [$id]);
+        if (empty($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Usuario no encontrado.'
+            ], 404);
+        }
+
+        if ($user[0]->role_id != 2) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Solo se puede configurar la comisión para usuarios con rol de Vendedor.'
+            ], 400);
+        }
+
+        \Illuminate\Support\Facades\DB::update("
+            UPDATE users SET commission_percentage = ? WHERE id = ?
+        ", [(float) $validated['commission_percentage'], $id]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Comisión de vendedor actualizada exitosamente.'
+        ]);
+    }
 }

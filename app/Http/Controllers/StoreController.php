@@ -47,6 +47,10 @@ class StoreController extends Controller
     {
         $stores = $this->storeRepo->getAll();
         
+        $retailStores = array_filter($stores, function($store) {
+            return ($store->type ?? 'tienda') === 'tienda';
+        });
+
         $publicStores = array_map(function($store) {
             return [
                 'id' => $store->id,
@@ -56,7 +60,7 @@ class StoreController extends Controller
                 'latitude' => $store->latitude ? (float) $store->latitude : null,
                 'longitude' => $store->longitude ? (float) $store->longitude : null,
             ];
-        }, $stores);
+        }, array_values($retailStores));
 
         return response()->json([
             'success' => true,
@@ -70,6 +74,7 @@ class StoreController extends Controller
             'name' => 'required|string|max:255|unique:stores',
             'address' => 'required|string|max:500',
             'phone' => 'nullable|string|max:50',
+            'type' => 'required|string|in:tienda,almacen',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180'
         ]);
@@ -89,6 +94,7 @@ class StoreController extends Controller
             'name' => 'required|string|max:255|unique:stores,name,' . $id,
             'address' => 'required|string|max:500',
             'phone' => 'nullable|string|max:50',
+            'type' => 'required|string|in:tienda,almacen',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180'
         ], [

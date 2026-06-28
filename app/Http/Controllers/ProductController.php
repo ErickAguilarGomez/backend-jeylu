@@ -58,8 +58,9 @@ class ProductController extends Controller
         
         $storeId = $this->getStoreIdIfSeller();
         $categoryId = $request->query('category_id') ? (int) $request->query('category_id') : null;
+        $includeDeleted = $request->query('include_deleted') == 1;
 
-        $result = $this->productRepo->getPaginated($page, $perPage, $search, $storeId, $categoryId);
+        $result = $this->productRepo->getPaginated($page, $perPage, $search, $storeId, $categoryId, $includeDeleted);
 
         return response()->json([
             'success' => true,
@@ -152,29 +153,48 @@ class ProductController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'base_sku' => ['required', 'string', 'max:100'],
+            'base_sku' => ['nullable', 'string', 'max:100'],
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'store_id' => ['required', 'integer', 'exists:stores,id'],
-            'name' => ['required', 'string', 'max:255'],
+            'name' => ['required', 'string', 'max:255', 'unique:products,name'],
             'price' => ['required', 'numeric', 'min:0'],
+            'purchase_price' => ['nullable', 'numeric', 'min:0'],
             'description' => ['nullable', 'string'],
+            'video_url' => ['nullable', 'string', 'max:500'],
             'images' => ['nullable', 'array'],
             'images.*' => ['nullable', 'file', 'image', 'max:5120'],
             'image_urls' => ['nullable', 'array'],
             'image_urls.*' => ['nullable', 'string'],
             'variants' => ['required', 'array', 'min:1'],
-            'variants.*.sku' => ['nullable', 'string', 'max:100'],
-            'variants.*.size' => ['nullable', 'string', 'max:50'],
+            'variants.*.size' => ['required', 'string', 'max:50'],
             'variants.*.color' => ['nullable', 'string', 'max:50'],
-            'variants.*.stock' => ['required', 'integer', 'min:0']
+            'variants.*.stocks' => ['required', 'array'],
+            'variants.*.stocks.*' => ['required', 'integer', 'min:0']
+        ], [
+            'name.unique' => 'Ya existe un producto con este nombre.',
+            'variants.*.size.required' => 'La talla es obligatoria para todas las variantes.',
+            'variants.*.stocks.required' => 'El stock por tienda es obligatorio.'
         ]);
 
-        $existing = $this->productRepo->findBySku($validated['base_sku']);
-        if ($existing) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Base SKU already exists.'
-            ], 422);
+        if (empty($validated['base_sku'])) {
+            $cleanName = substr(preg_replace('/[^A-Z0-9]/', '', strtoupper($validated['name'])), 0, 4);
+            if (empty($cleanName)) {
+                $cleanName = 'PROD';
+            }
+            do {
+                $randomNum = rand(1000, 9999);
+                $baseSku = $cleanName . '-' . $randomNum;
+                $exists = DB::select("SELECT id FROM products WHERE base_sku = ?", [$baseSku]);
+            } while (!empty($exists));
+            $validated['base_sku'] = $baseSku;
+        } else {
+            $existing = $this->productRepo->findBySku($validated['base_sku']);
+            if ($existing) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Base SKU already exists.'
+                ], 422);
+            }
         }
 
         $processedImages = [];
@@ -202,29 +222,17 @@ class ProductController extends Controller
 
         $processedVariants = [];
         foreach ($validated['variants'] as $index => $v) {
-            $size = $v['size'] ?? null;
+            $size = $v['size'];
             $color = $v['color'] ?? null;
             
-            if (!empty($v['sku'])) {
-                $variantSku = strtoupper($v['sku']);
-            } else {
-                $suffix = [];
-                if ($size) $suffix[] = strtoupper($size);
-                if ($color) $suffix[] = strtoupper($color);
-                
-                $variantSku = $validated['base_sku'];
-                if (!empty($suffix)) {
-                    $variantSku .= '-' . implode('-', $suffix);
-                } else {
-                    $variantSku .= '-' . ($index + 1);
-                }
-            }
+            $sizeClean = strtoupper(preg_replace('/[^A-Z0-9]/', '', $size));
+            $variantSku = $validated['base_sku'] . '-' . $sizeClean;
 
             $processedVariants[] = [
                 'sku' => $variantSku,
                 'size' => $size,
                 'color' => $color,
-                'stock' => (int) $v['stock']
+                'stocks' => $v['stocks']
             ];
         }
 
@@ -235,7 +243,9 @@ class ProductController extends Controller
             'category_id' => $validated['category_id'],
             'name' => $validated['name'],
             'description' => $validated['description'] ?? null,
+            'video_url' => $validated['video_url'] ?? null,
             'price' => $validated['price'],
+            'purchase_price' => $validated['purchase_price'] ?? 0.00,
             'images' => $processedImages,
             'variants' => $processedVariants
         ];
@@ -263,19 +273,25 @@ class ProductController extends Controller
         $validated = $request->validate([
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'store_id' => ['required', 'integer', 'exists:stores,id'],
-            'name' => ['required', 'string', 'max:255'],
+            'name' => ['required', 'string', 'max:255', 'unique:products,name,' . $product->id],
             'price' => ['required', 'numeric', 'min:0'],
+            'purchase_price' => ['nullable', 'numeric', 'min:0'],
             'description' => ['nullable', 'string'],
+            'video_url' => ['nullable', 'string', 'max:500'],
             'images' => ['nullable', 'array'],
             'images.*' => ['nullable', 'file', 'image', 'max:5120'],
             'image_urls' => ['nullable', 'array'],
             'image_urls.*' => ['nullable', 'string'],
             'variants' => ['required', 'array', 'min:1'],
             'variants.*.id' => ['nullable', 'integer'],
-            'variants.*.sku' => ['nullable', 'string', 'max:100'],
-            'variants.*.size' => ['nullable', 'string', 'max:50'],
+            'variants.*.size' => ['required', 'string', 'max:50'],
             'variants.*.color' => ['nullable', 'string', 'max:50'],
-            'variants.*.stock' => ['required', 'integer', 'min:0']
+            'variants.*.stocks' => ['required', 'array'],
+            'variants.*.stocks.*' => ['required', 'integer', 'min:0']
+        ], [
+            'name.unique' => 'Ya existe un producto con este nombre.',
+            'variants.*.size.required' => 'La talla es obligatoria para todas las variantes.',
+            'variants.*.stocks.required' => 'El stock por tienda es obligatorio.'
         ]);
 
         // Upload any new provided files
@@ -309,30 +325,18 @@ class ProductController extends Controller
 
         $processedVariants = [];
         foreach ($validated['variants'] as $index => $v) {
-            $size = $v['size'] ?? null;
+            $size = $v['size'];
             $color = $v['color'] ?? null;
             
-            if (!empty($v['sku'])) {
-                $variantSku = strtoupper($v['sku']);
-            } else {
-                $suffix = [];
-                if ($size) $suffix[] = strtoupper($size);
-                if ($color) $suffix[] = strtoupper($color);
-                
-                $variantSku = $baseSku;
-                if (!empty($suffix)) {
-                    $variantSku .= '-' . implode('-', $suffix);
-                } else {
-                    $variantSku .= '-' . ($index + 1);
-                }
-            }
+            $sizeClean = strtoupper(preg_replace('/[^A-Z0-9]/', '', $size));
+            $variantSku = $baseSku . '-' . $sizeClean;
 
             $processedVariants[] = [
                 'id' => $v['id'] ?? null,
                 'sku' => $variantSku,
                 'size' => $size,
                 'color' => $color,
-                'stock' => (int) $v['stock']
+                'stocks' => $v['stocks']
             ];
         }
 
@@ -342,7 +346,9 @@ class ProductController extends Controller
             'category_id' => $validated['category_id'],
             'name' => $validated['name'],
             'price' => $validated['price'],
+            'purchase_price' => $validated['purchase_price'] ?? 0.00,
             'description' => $validated['description'] ?? null,
+            'video_url' => $validated['video_url'] ?? null,
             'variants' => $processedVariants
         ], $storeId);
 
@@ -372,19 +378,40 @@ class ProductController extends Controller
             DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => 'No se puede eliminar el producto porque tiene ventas asociadas.'
-            ], 400);
-        }
-
-        if (!empty($product->images)) {
-            foreach ($product->images as $img) {
-                $this->cloudinaryService->delete($img->image_url);
-            }
+                'message' => 'Error al eliminar el producto: ' . $e->getMessage()
+            ], 500);
         }
 
         return response()->json([
             'success' => true,
             'message' => 'Product deleted.'
         ]);
+    }
+
+    public function restore(string $sku)
+    {
+        try {
+            DB::beginTransaction();
+            $restored = $this->productRepo->restore($sku);
+            DB::commit();
+
+            if ($restored) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Product restored successfully.'
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Product not found or already active.'
+            ], 404);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
 }

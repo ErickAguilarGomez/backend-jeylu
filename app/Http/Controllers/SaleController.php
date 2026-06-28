@@ -91,8 +91,80 @@ class SaleController extends Controller
             'success' => true,
             'stats' => [
                 'total_amount' => (float) $stats->total_amount,
+                'total_commission' => (float) ($stats->total_commission ?? 0.00),
                 'total_sales' => (int) $stats->total_sales
             ]
+        ]);
+    }
+
+ 
+    public function commissionsReport(Request $request)
+    {
+        $user = Auth::user();
+        if (!$user || $user->role_id != 1) {
+            return response()->json(['success' => false, 'message' => 'Acceso denegado.'], 403);
+        }
+
+        $startDate = $request->query('start_date');
+        $endDate = $request->query('end_date');
+        $sellerId = $request->query('seller_id') ? (int) $request->query('seller_id') : null;
+        $status = $request->query('status');
+
+        $sql = "
+            SELECT 
+                u.id as seller_id,
+                u.name as seller_name,
+                COUNT(s.id) as total_sales,
+                COALESCE(SUM(s.total), 0) as total_sold,
+                COALESCE(SUM(s.commission_amount), 0) as total_commission
+            FROM users u
+            LEFT JOIN sales s ON u.id = s.seller_id
+        ";
+
+        $joinConditions = [];
+        $joinParams = [];
+
+        if ($startDate) {
+            $joinConditions[] = "s.created_at >= ?";
+            $joinParams[] = $startDate . ' 00:00:00';
+        }
+        if ($endDate) {
+            $joinConditions[] = "s.created_at <= ?";
+            $joinParams[] = $endDate . ' 23:59:59';
+        }
+        if ($status) {
+            $joinConditions[] = "s.status = ?";
+            $joinParams[] = $status;
+        } else {
+            $joinConditions[] = "s.status IN ('COMPLETED', 'EXCHANGED')";
+        }
+
+        if (!empty($joinConditions)) {
+            $sql .= " AND " . implode(" AND ", $joinConditions);
+        }
+
+        $sql .= " WHERE u.role_id = 2";
+        $whereParams = [];
+        if ($sellerId) {
+            $sql .= " AND u.id = ?";
+            $whereParams[] = $sellerId;
+        }
+
+        $sql .= " GROUP BY u.id, u.name ORDER BY total_commission DESC";
+
+        $params = array_merge($joinParams, $whereParams);
+        $data = \Illuminate\Support\Facades\DB::select($sql, $params);
+
+        // Convert values to correct numeric types
+        foreach ($data as $item) {
+            $item->total_sales = (int) $item->total_sales;
+            $item->total_sold = (float) $item->total_sold;
+            $item->total_commission = (float) $item->total_commission;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $data
         ]);
     }
 
@@ -113,6 +185,7 @@ class SaleController extends Controller
             'items' => ['required', 'array', 'min:1'],
             'items.*.sku' => ['required', 'string'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.price' => ['nullable', 'numeric', 'min:0'],
             'customer_id' => ['nullable', 'integer', 'exists:users,id'],
             'customer_name' => ['nullable', 'string', 'max:255'],
             'store_id' => ['nullable', 'integer', 'exists:stores,id']
@@ -146,6 +219,59 @@ class SaleController extends Controller
             );
             return response()->json($result, 201);
         } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 422);
+        }
+    }
+
+    public function update(Request $request, int $id)
+    {
+        $user = Auth::user();
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $sale = \Illuminate\Support\Facades\DB::select("SELECT * FROM sales WHERE id = ? LIMIT 1", [$id]);
+        if (empty($sale)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sale not found.'
+            ], 404);
+        }
+        $sale = $sale[0];
+
+        if ($user->role_id != 1 && ($user->role_id != 2 || $sale->seller_id != $user->id)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Acceso denegado. No tienes permisos para editar esta venta.'
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.sku' => ['required', 'string'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.price' => ['nullable', 'numeric', 'min:0'],
+            'status' => ['required', 'string', 'in:COMPLETED,EXCHANGED,REFUNDED,CANCELLED'],
+            'customer_name' => ['nullable', 'string', 'max:255']
+        ]);
+
+        try {
+            $result = $this->saleService->updateSale(
+                $id,
+                $validated['items'],
+                $validated['status'],
+                $validated['customer_name'] ?? null,
+                $user->id
+            );
+
+            return response()->json($result);
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage()

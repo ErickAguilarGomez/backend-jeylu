@@ -14,7 +14,7 @@ class StoreRepository
 
         $countQuery = "SELECT COUNT(s.id) as total FROM stores s WHERE 1=1";
         $selectQuery = "
-            SELECT s.id, s.name, s.address, s.phone, s.latitude, s.longitude, s.created_at, u.name as created_by_name
+            SELECT s.id, s.name, s.type, s.address, s.phone, s.latitude, s.longitude, s.created_at, u.name as created_by_name
             FROM stores s
             LEFT JOIN users u ON s.created_by = u.id
             WHERE 1=1
@@ -48,7 +48,7 @@ class StoreRepository
     public function getAll()
     {
         return DB::select("
-            SELECT s.id, s.name, s.address, s.phone, s.latitude, s.longitude, s.created_at, u.name as created_by_name
+            SELECT s.id, s.name, s.type, s.address, s.phone, s.latitude, s.longitude, s.created_at, u.name as created_by_name
             FROM stores s
             LEFT JOIN users u ON s.created_by = u.id
             ORDER BY s.id ASC
@@ -63,11 +63,14 @@ class StoreRepository
 
     public function create(array $data, int $userId)
     {
-        DB::insert("INSERT INTO stores (name, address, phone, latitude, longitude, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())", [
+        $timestamp = now();
+        DB::insert("INSERT INTO stores (name, address, phone, type, latitude, longitude, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
             $data['name'], $data['address'], $data['phone'] ?? null,
+            $data['type'],
             isset($data['latitude']) ? (float)$data['latitude'] : null,
             isset($data['longitude']) ? (float)$data['longitude'] : null,
-            $userId, $userId
+            $userId, $userId,
+            $timestamp, $timestamp
         ]);
 
         $id = DB::getPdo()->lastInsertId();
@@ -76,11 +79,12 @@ class StoreRepository
 
     public function update(int $id, array $data, int $userId)
     {
-        return DB::update("UPDATE stores SET name = ?, address = ?, phone = ?, latitude = ?, longitude = ?, updated_by = ?, updated_at = NOW() WHERE id = ?", [
+        return DB::update("UPDATE stores SET name = ?, address = ?, phone = ?, type = ?, latitude = ?, longitude = ?, updated_by = ?, updated_at = ? WHERE id = ?", [
             $data['name'], $data['address'], $data['phone'] ?? null,
+            $data['type'],
             isset($data['latitude']) ? (float)$data['latitude'] : null,
             isset($data['longitude']) ? (float)$data['longitude'] : null,
-            $userId, $id
+            $userId, now(), $id
         ]);
     }
 
@@ -91,19 +95,20 @@ class StoreRepository
 
     public function assignUser(int $storeId, int $userId, bool $isPrimary, int $assignedBy)
     {
+        $timestamp = now();
         if ($isPrimary) {
             DB::update("UPDATE store_user SET is_primary = 0 WHERE user_id = ?", [$userId]);
         }
 
         $exists = DB::select("SELECT id FROM store_user WHERE store_id = ? AND user_id = ?", [$storeId, $userId]);
         if (!empty($exists)) {
-            return DB::update("UPDATE store_user SET is_primary = ?, assigned_by = ?, updated_at = NOW() WHERE id = ?", [
-                $isPrimary ? 1 : 0, $assignedBy, $exists[0]->id
+            return DB::update("UPDATE store_user SET is_primary = ?, assigned_by = ?, updated_at = ? WHERE id = ?", [
+                $isPrimary ? 1 : 0, $assignedBy, $timestamp, $exists[0]->id
             ]);
         }
 
-        return DB::insert("INSERT INTO store_user (store_id, user_id, is_primary, assigned_by, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())", [
-            $storeId, $userId, $isPrimary ? 1 : 0, $assignedBy
+        return DB::insert("INSERT INTO store_user (store_id, user_id, is_primary, assigned_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", [
+            $storeId, $userId, $isPrimary ? 1 : 0, $assignedBy, $timestamp, $timestamp
         ]);
     }
 

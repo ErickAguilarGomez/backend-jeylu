@@ -25,15 +25,18 @@ class BannerRepository
     public function create(array $data)
     {
         $userId = auth()->id();
+        $timestamp = now();
         DB::insert("
             INSERT INTO banners (image_url, is_active, sort_order, created_by, updated_by, created_at, updated_at) 
-            VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ", [
             $data['image_url'],
             isset($data['is_active']) ? (int)$data['is_active'] : 1,
             isset($data['sort_order']) ? (int)$data['sort_order'] : 0,
             $userId,
-            $userId
+            $userId,
+            $timestamp,
+            $timestamp
         ]);
 
         $id = DB::getPdo()->lastInsertId();
@@ -62,7 +65,8 @@ class BannerRepository
         $fields[] = "updated_by = ?";
         $params[] = $userId;
 
-        $fields[] = "updated_at = NOW()";
+        $fields[] = "updated_at = ?";
+        $params[] = now();
         $params[] = $id;
 
         $fieldsStr = implode(', ', $fields);
@@ -82,7 +86,7 @@ class BannerRepository
         try {
             $userId = auth()->id();
             foreach ($orderList as $index => $id) {
-                DB::update("UPDATE banners SET sort_order = ?, updated_by = ?, updated_at = NOW() WHERE id = ?", [$index, $userId, (int) $id]);
+                DB::update("UPDATE banners SET sort_order = ?, updated_by = ?, updated_at = ? WHERE id = ?", [$index, $userId, now(), (int) $id]);
             }
             DB::commit();
             return true;
