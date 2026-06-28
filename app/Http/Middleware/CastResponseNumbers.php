@@ -43,9 +43,13 @@ class CastResponseNumbers
                 $data[$key] = $this->castArray($value);
             } elseif (is_string($value)) {
                 // Cast IDs, foreign keys, creator/updater references, stocks and quantities
-                if ($key === 'id' || str_ends_with($key, '_id') || str_ends_with($key, '_by') || $key === 'stock' || $key === 'quantity') {
+                if ($key === 'id' || str_ends_with($key, '_id') || str_ends_with($key, '_by') || $key === 'stock' || $key === 'total_stock' || $key === 'quantity' || $key === 'total_sales') {
                     if (ctype_digit($value)) {
                         $data[$key] = (int)$value;
+                    }
+                } elseif ($key === 'price' || $key === 'purchase_price' || $key === 'total' || $key === 'commission_amount' || $key === 'total_amount') {
+                    if (is_numeric($value)) {
+                        $data[$key] = (float)$value;
                     }
                 }
             }
