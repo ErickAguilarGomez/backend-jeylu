@@ -180,7 +180,7 @@ class ProductRepository
             $variant = DB::select("
                 SELECT pv.id as variant_id, pv.sku as variant_sku, pv.size, pv.color, 
                        p.id as product_id, p.category_id, p.base_sku, p.name, p.price, p.purchase_price, p.deleted_at,
-                       c.name as category_name, s.name as store_name, s.address as store_address, s.phone as store_phone,
+                       c.name as category_name, c.unit_of_measure, s.name as store_name, s.address as store_address, s.phone as store_phone,
                        (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
                        COALESCE(
                            (SELECT stock FROM store_inventories WHERE variant_id = pv.id AND store_id = ?), 
@@ -195,7 +195,7 @@ class ProductRepository
             $variant = DB::select("
                 SELECT pv.id as variant_id, pv.sku as variant_sku, pv.size, pv.color, 
                        p.id as product_id, p.category_id, p.base_sku, p.name, p.price, p.purchase_price, p.deleted_at,
-                       c.name as category_name, s.name as store_name, s.address as store_address, s.phone as store_phone,
+                       c.name as category_name, c.unit_of_measure, s.name as store_name, s.address as store_address, s.phone as store_phone,
                        (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
                        COALESCE(
                            (SELECT SUM(stock) FROM store_inventories WHERE variant_id = pv.id), 
@@ -222,7 +222,7 @@ class ProductRepository
 
         $product = DB::select("
             SELECT p.id, p.category_id, p.store_id, p.purchase_order_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.deleted_at, p.description, p.video_url,
-                   c.name as category_name, s.name as store_name, s.address as store_address, s.phone as store_phone,
+                   c.name as category_name, c.unit_of_measure, s.name as store_name, s.address as store_address, s.phone as store_phone,
                    (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
                    COALESCE((
                        SELECT SUM(si.stock) 

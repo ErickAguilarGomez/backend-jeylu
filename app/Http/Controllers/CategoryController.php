@@ -47,7 +47,8 @@ class CategoryController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255|unique:categories',
-            'description' => 'nullable|string|max:500'
+            'description' => 'nullable|string|max:500',
+            'unit_of_measure' => 'nullable|string|max:50'
         ]);
 
         $category = $this->categoryRepo->create($validated, Auth::id());
@@ -63,7 +64,8 @@ class CategoryController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255|unique:categories,name,' . $id,
-            'description' => 'nullable|string|max:500'
+            'description' => 'nullable|string|max:500',
+            'unit_of_measure' => 'nullable|string|max:50'
         ], [
             'name.unique' => 'El nombre de la categoría ya está registrado.'
         ]);

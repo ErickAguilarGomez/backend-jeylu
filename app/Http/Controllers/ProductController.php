@@ -167,7 +167,7 @@ class ProductController extends Controller
             'image_urls' => ['nullable', 'array'],
             'image_urls.*' => ['nullable', 'string'],
             'variants' => ['required', 'array', 'min:1'],
-            'variants.*.size' => ['required', 'string', 'max:50'],
+            'variants.*.size' => ['nullable', 'string', 'max:50'],
             'variants.*.color' => ['nullable', 'string', 'max:50'],
             'variants.*.stocks' => ['required', 'array'],
             'variants.*.stocks.*' => ['required', 'integer', 'min:0'],
@@ -234,10 +234,10 @@ class ProductController extends Controller
 
         $processedVariants = [];
         foreach ($validated['variants'] as $index => $v) {
-            $size = $v['size'];
+            $size = $v['size'] ?? null;
             $color = $v['color'] ?? null;
             
-            $sizeClean = strtoupper(preg_replace('/[^A-Z0-9]/', '', $size));
+            $sizeClean = $size !== null && $size !== '' ? strtoupper(preg_replace('/[^A-Z0-9]/', '', $size)) : 'U';
             $variantSku = $validated['base_sku'] . '-' . $sizeClean;
 
             $processedVariants[] = [
@@ -298,7 +298,7 @@ class ProductController extends Controller
             'image_urls.*' => ['nullable', 'string'],
             'variants' => ['required', 'array', 'min:1'],
             'variants.*.id' => ['nullable', 'integer'],
-            'variants.*.size' => ['required', 'string', 'max:50'],
+            'variants.*.size' => ['nullable', 'string', 'max:50'],
             'variants.*.color' => ['nullable', 'string', 'max:50'],
             'variants.*.stocks' => ['required', 'array'],
             'variants.*.stocks.*' => ['required', 'integer', 'min:0'],
@@ -350,10 +350,10 @@ class ProductController extends Controller
 
         $processedVariants = [];
         foreach ($validated['variants'] as $index => $v) {
-            $size = $v['size'];
+            $size = $v['size'] ?? null;
             $color = $v['color'] ?? null;
             
-            $sizeClean = strtoupper(preg_replace('/[^A-Z0-9]/', '', $size));
+            $sizeClean = $size !== null && $size !== '' ? strtoupper(preg_replace('/[^A-Z0-9]/', '', $size)) : 'U';
             $variantSku = $baseSku . '-' . $sizeClean;
 
             $processedVariants[] = [
