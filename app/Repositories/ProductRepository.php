@@ -221,7 +221,7 @@ class ProductRepository
         }
 
         $product = DB::select("
-            SELECT p.id, p.category_id, p.store_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.deleted_at, p.description, p.video_url,
+            SELECT p.id, p.category_id, p.store_id, p.purchase_order_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.deleted_at, p.description, p.video_url,
                    c.name as category_name, s.name as store_name, s.address as store_address, s.phone as store_phone,
                    (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
                    COALESCE((
@@ -242,6 +242,22 @@ class ProductRepository
         }
 
         $product = $product[0];
+
+        if (!empty($product->purchase_order_id)) {
+            $po = DB::select("
+                SELECT id, order_number, file_url, provider, purchase_date, total_amount, observations, status,
+                       (SELECT COUNT(*) FROM products WHERE purchase_order_id = ?) as products_count
+                FROM purchase_orders
+                WHERE id = ? LIMIT 1
+            ", [$product->purchase_order_id, $product->purchase_order_id]);
+            $product->purchase_order = !empty($po) ? $po[0] : null;
+            if ($product->purchase_order) {
+                $product->purchase_order->total_amount = $product->purchase_order->total_amount !== null ? (float) $product->purchase_order->total_amount : null;
+                $product->purchase_order->products_count = (int) $product->purchase_order->products_count;
+            }
+        } else {
+            $product->purchase_order = null;
+        }
         $product->variants = DB::select("
             SELECT pv.id, pv.sku, pv.size, pv.color,
                    COALESCE((SELECT " . ($storeId ? "stock FROM store_inventories WHERE variant_id = pv.id AND store_id = $storeId" : "SUM(stock) FROM store_inventories WHERE variant_id = pv.id") . "), 0) as stock
@@ -286,12 +302,13 @@ class ProductRepository
             $userId = auth()->id();
             $timestamp = now();
             DB::insert("
-                INSERT INTO products (base_sku, category_id, store_id, name, description, video_url, price, purchase_price, created_by, updated_by, created_at, updated_at) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO products (base_sku, category_id, store_id, purchase_order_id, name, description, video_url, price, purchase_price, created_by, updated_by, created_at, updated_at) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ", [
                 $data['base_sku'],
                 $data['category_id'],
                 $storeId,
+                $data['purchase_order_id'] ?? null,
                 $data['name'],
                 $data['description'] ?? null,
                 $data['video_url'] ?? null,
@@ -369,11 +386,12 @@ class ProductRepository
             $timestamp = now();
             DB::update("
                 UPDATE products 
-                SET category_id = ?, store_id = ?, name = ?, description = ?, video_url = ?, price = ?, purchase_price = ?, updated_by = ?, updated_at = ? 
+                SET category_id = ?, store_id = ?, purchase_order_id = ?, name = ?, description = ?, video_url = ?, price = ?, purchase_price = ?, updated_by = ?, updated_at = ? 
                 WHERE base_sku = ?
             ", [
                 $data['category_id'],
                 $storeId,
+                $data['purchase_order_id'] ?? null,
                 $data['name'],
                 $data['description'] ?? null,
                 $data['video_url'] ?? null,

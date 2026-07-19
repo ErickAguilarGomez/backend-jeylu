@@ -170,7 +170,18 @@ class ProductController extends Controller
             'variants.*.size' => ['required', 'string', 'max:50'],
             'variants.*.color' => ['nullable', 'string', 'max:50'],
             'variants.*.stocks' => ['required', 'array'],
-            'variants.*.stocks.*' => ['required', 'integer', 'min:0']
+            'variants.*.stocks.*' => ['required', 'integer', 'min:0'],
+            
+            // Purchase order fields
+            'purchase_order_option' => ['nullable', 'string', 'in:none,new,existing'],
+            'purchase_order_id' => ['nullable', 'integer', 'exists:purchase_orders,id'],
+            'purchase_order_file' => ['nullable', 'file', 'mimes:pdf,png,jpg,jpeg', 'max:5120'],
+            'purchase_order_number' => ['nullable', 'string', 'max:255'],
+            'purchase_order_provider' => ['nullable', 'string', 'max:255'],
+            'purchase_order_date' => ['nullable', 'date'],
+            'purchase_order_total' => ['nullable', 'numeric', 'min:0'],
+            'purchase_order_status' => ['nullable', 'string', 'max:100'],
+            'purchase_order_observations' => ['nullable', 'string'],
         ], [
             'name.unique' => 'Ya existe un producto con este nombre.',
             'variants.*.size.required' => 'La talla es obligatoria para todas las variantes.',
@@ -237,11 +248,13 @@ class ProductController extends Controller
             ];
         }
 
+        $purchaseOrderId = $this->resolvePurchaseOrderId($request, $validated);
         $storeId = (int) $validated['store_id'];
 
         $productData = [
             'base_sku' => $validated['base_sku'],
             'category_id' => $validated['category_id'],
+            'purchase_order_id' => $purchaseOrderId,
             'name' => $validated['name'],
             'description' => $validated['description'] ?? null,
             'video_url' => $validated['video_url'] ?? null,
@@ -288,7 +301,18 @@ class ProductController extends Controller
             'variants.*.size' => ['required', 'string', 'max:50'],
             'variants.*.color' => ['nullable', 'string', 'max:50'],
             'variants.*.stocks' => ['required', 'array'],
-            'variants.*.stocks.*' => ['required', 'integer', 'min:0']
+            'variants.*.stocks.*' => ['required', 'integer', 'min:0'],
+            
+            // Purchase order fields
+            'purchase_order_option' => ['nullable', 'string', 'in:none,new,existing'],
+            'purchase_order_id' => ['nullable', 'integer', 'exists:purchase_orders,id'],
+            'purchase_order_file' => ['nullable', 'file', 'mimes:pdf,png,jpg,jpeg', 'max:5120'],
+            'purchase_order_number' => ['nullable', 'string', 'max:255'],
+            'purchase_order_provider' => ['nullable', 'string', 'max:255'],
+            'purchase_order_date' => ['nullable', 'date'],
+            'purchase_order_total' => ['nullable', 'numeric', 'min:0'],
+            'purchase_order_status' => ['nullable', 'string', 'max:100'],
+            'purchase_order_observations' => ['nullable', 'string'],
         ], [
             'name.unique' => 'Ya existe un producto con este nombre.',
             'variants.*.size.required' => 'La talla es obligatoria para todas las variantes.',
@@ -341,9 +365,9 @@ class ProductController extends Controller
             ];
         }
 
-        $storeId = (int) $validated['store_id'];
-
-        $updated = $this->productRepo->update($baseSku, [
+        $purchaseOrderId = $this->resolvePurchaseOrderId($request, $validated);
+        // If option is none, we explicitly clean it. If option is not provided, we keep the previous purchase_order_id.
+        $updatePayload = [
             'category_id' => $validated['category_id'],
             'name' => $validated['name'],
             'price' => $validated['price'],
@@ -351,7 +375,17 @@ class ProductController extends Controller
             'description' => $validated['description'] ?? null,
             'video_url' => $validated['video_url'] ?? null,
             'variants' => $processedVariants
-        ], $storeId);
+        ];
+
+        if (isset($validated['purchase_order_option'])) {
+            $updatePayload['purchase_order_id'] = $purchaseOrderId;
+        } else {
+            $updatePayload['purchase_order_id'] = $product->purchase_order_id;
+        }
+
+        $storeId = (int) $validated['store_id'];
+
+        $updated = $this->productRepo->update($baseSku, $updatePayload, $storeId);
 
         return response()->json([
             'success' => true,
@@ -414,5 +448,123 @@ class ProductController extends Controller
                 'message' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Obtener productos con stock bajo (<= 5 unidades) por tienda.
+     */
+    public function lowStock(Request $request)
+    {
+        $threshold = (int) $request->query('threshold', 5);
+
+        $data = DB::select("
+            SELECT 
+                p.name AS product_name,
+                p.base_sku,
+                pv.sku AS variant_sku,
+                pv.size,
+                s.name AS store_name,
+                si.stock
+            FROM store_inventories si
+            INNER JOIN product_variants pv ON pv.id = si.variant_id
+            INNER JOIN products p ON p.id = pv.product_id
+            INNER JOIN stores s ON s.id = si.store_id
+            WHERE p.deleted_at IS NULL
+              AND si.stock <= ?
+            ORDER BY si.stock ASC, s.name ASC, p.name ASC
+        ", [$threshold]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+            'count' => count($data)
+        ]);
+    }
+
+    private function resolvePurchaseOrderId(Request $request, array $validated)
+    {
+        $option = $validated['purchase_order_option'] ?? 'none';
+        
+        if ($option === 'none') {
+            return null;
+        }
+        
+        if ($option === 'existing') {
+            $poId = $validated['purchase_order_id'] ?? null;
+            if ($poId) {
+                // Allow updating details of the existing order if provided
+                $updateData = [];
+                $updateParams = [];
+                
+                if ($request->hasFile('purchase_order_file')) {
+                    $file = $request->file('purchase_order_file');
+                    $fileUrl = $this->cloudinaryService->upload($file, 'purchase_orders');
+                    $updateData[] = "file_url = ?";
+                    $updateParams[] = $fileUrl;
+                }
+                
+                if (isset($validated['purchase_order_number'])) {
+                    $updateData[] = "order_number = ?";
+                    $updateParams[] = $validated['purchase_order_number'];
+                }
+                if (isset($validated['purchase_order_provider'])) {
+                    $updateData[] = "provider = ?";
+                    $updateParams[] = $validated['purchase_order_provider'];
+                }
+                if (isset($validated['purchase_order_date'])) {
+                    $updateData[] = "purchase_date = ?";
+                    $updateParams[] = $validated['purchase_order_date'];
+                }
+                if (isset($validated['purchase_order_total'])) {
+                    $updateData[] = "total_amount = ?";
+                    $updateParams[] = $validated['purchase_order_total'];
+                }
+                if (isset($validated['purchase_order_status'])) {
+                    $updateData[] = "status = ?";
+                    $updateParams[] = $validated['purchase_order_status'];
+                }
+                if (isset($validated['purchase_order_observations'])) {
+                    $updateData[] = "observations = ?";
+                    $updateParams[] = $validated['purchase_order_observations'];
+                }
+                
+                if (!empty($updateData)) {
+                    $updateParams[] = $poId;
+                    DB::update("
+                        UPDATE purchase_orders 
+                        SET " . implode(", ", $updateData) . ", updated_at = NOW() 
+                        WHERE id = ?
+                    ", $updateParams);
+                }
+                
+                return $poId;
+            }
+            return null;
+        }
+        
+        if ($option === 'new') {
+            if ($request->hasFile('purchase_order_file')) {
+                $file = $request->file('purchase_order_file');
+                $fileUrl = $this->cloudinaryService->upload($file, 'purchase_orders');
+                
+                DB::insert("
+                    INSERT INTO purchase_orders (order_number, file_url, provider, purchase_date, total_amount, observations, status, created_by, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                ", [
+                    $validated['purchase_order_number'] ?? null,
+                    $fileUrl,
+                    $validated['purchase_order_provider'] ?? null,
+                    $validated['purchase_order_date'] ?? null,
+                    $validated['purchase_order_total'] ?? null,
+                    $validated['purchase_order_observations'] ?? null,
+                    $validated['purchase_order_status'] ?? null,
+                    Auth::id()
+                ]);
+                
+                return DB::getPdo()->lastInsertId();
+            }
+        }
+        
+        return null;
     }
 }

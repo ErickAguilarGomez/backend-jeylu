@@ -10,4 +10,6 @@ Route::prefix('users')->group(base_path('routes/api/users.php'));
 Route::prefix('sales')->group(base_path('routes/api/sales.php'));
 Route::prefix('banners')->group(base_path('routes/api/banners.php'));
 Route::prefix('settings')->group(base_path('routes/api/settings.php'));
+Route::prefix('purchase-orders')->group(base_path('routes/api/purchase-orders.php'));
+
 
