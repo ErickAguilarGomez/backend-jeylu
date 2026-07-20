@@ -48,7 +48,9 @@ class CategoryController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255|unique:categories',
             'description' => 'nullable|string|max:500',
-            'unit_of_measure' => 'nullable|string|max:50'
+            'unit_of_measure' => 'nullable|string|max:50',
+            'discount_enabled' => 'nullable|boolean',
+            'discount_percentage' => 'nullable|numeric|min:1|max:100'
         ]);
 
         $category = $this->categoryRepo->create($validated, Auth::id());
@@ -65,9 +67,13 @@ class CategoryController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255|unique:categories,name,' . $id,
             'description' => 'nullable|string|max:500',
-            'unit_of_measure' => 'nullable|string|max:50'
+            'unit_of_measure' => 'nullable|string|max:50',
+            'discount_enabled' => 'nullable|boolean',
+            'discount_percentage' => 'nullable|numeric|min:1|max:100'
         ], [
-            'name.unique' => 'El nombre de la categoría ya está registrado.'
+            'name.unique' => 'El nombre de la categoría ya está registrado.',
+            'discount_percentage.min' => 'El descuento debe ser de al menos 1%.',
+            'discount_percentage.max' => 'El descuento no puede superar el 100%.'
         ]);
 
         $this->categoryRepo->update($id, $validated, Auth::id());

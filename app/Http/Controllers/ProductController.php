@@ -41,10 +41,46 @@ class ProductController extends Controller
 
     private function formatProducts(array $products, bool $keepStock = false): array
     {
+        $genDiscount = DB::select("SELECT percentage, is_active FROM general_discounts ORDER BY id ASC LIMIT 1");
+        $genPct = (!empty($genDiscount) && $genDiscount[0]->is_active) ? (float)$genDiscount[0]->percentage : 0.00;
+
+        $categories = DB::select("SELECT id, discount_enabled, discount_percentage FROM categories");
+        $catDiscountMap = [];
+        foreach ($categories as $cat) {
+            if ($cat->discount_enabled && $cat->discount_percentage > 0) {
+                $catDiscountMap[$cat->id] = (float)$cat->discount_percentage;
+            }
+        }
+
         foreach ($products as $item) {
-            $item->is_available = (bool) $item->is_available;
+            $item->is_available = (bool) ($item->is_available ?? false);
             if (!$keepStock && property_exists($item, 'total_stock')) {
                 unset($item->total_stock);
+            }
+
+            $originalPrice = (float) $item->price;
+            $catId = $item->category_id ?? null;
+            $discountPct = 0.00;
+            $discountType = 'none';
+
+            if ($catId && isset($catDiscountMap[$catId])) {
+                $discountPct = $catDiscountMap[$catId];
+                $discountType = 'category';
+            } else if ($genPct > 0) {
+                $discountPct = $genPct;
+                $discountType = 'general';
+            }
+
+            $item->original_price = $originalPrice;
+            $item->discount_percentage = $discountPct;
+            $item->discount_type = $discountType;
+
+            if ($discountPct > 0) {
+                $discountAmount = round($originalPrice * ($discountPct / 100), 2);
+                $item->price = max(0.00, round($originalPrice - $discountAmount, 2));
+                $item->discounted_price = $item->price;
+            } else {
+                $item->discounted_price = $originalPrice;
             }
         }
         return $products;
@@ -130,9 +166,11 @@ class ProductController extends Controller
             ], 404);
         }
 
+        $formatted = $this->formatProducts([$product], true);
+
         return response()->json([
             'success' => true,
-            'data' => $product
+            'data' => $formatted[0]
         ]);
     }
 
@@ -157,7 +195,7 @@ class ProductController extends Controller
             'base_sku' => ['nullable', 'string', 'max:100'],
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'store_id' => ['required', 'integer', 'exists:stores,id'],
-            'name' => ['required', 'string', 'max:255', 'unique:products,name'],
+            'name' => ['required', 'string', 'max:255'],
             'price' => ['required', 'numeric', 'min:0'],
             'purchase_price' => ['nullable', 'numeric', 'min:0'],
             'description' => ['nullable', 'string'],
@@ -183,7 +221,6 @@ class ProductController extends Controller
             'purchase_order_status' => ['nullable', 'string', 'max:100'],
             'purchase_order_observations' => ['nullable', 'string'],
         ], [
-            'name.unique' => 'Ya existe un producto con este nombre.',
             'variants.*.size.required' => 'La talla es obligatoria para todas las variantes.',
             'variants.*.stocks.required' => 'El stock por tienda es obligatorio.'
         ]);
@@ -287,7 +324,7 @@ class ProductController extends Controller
         $validated = $request->validate([
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'store_id' => ['required', 'integer', 'exists:stores,id'],
-            'name' => ['required', 'string', 'max:255', 'unique:products,name,' . $product->id],
+            'name' => ['required', 'string', 'max:255'],
             'price' => ['required', 'numeric', 'min:0'],
             'purchase_price' => ['nullable', 'numeric', 'min:0'],
             'description' => ['nullable', 'string'],
@@ -314,7 +351,6 @@ class ProductController extends Controller
             'purchase_order_status' => ['nullable', 'string', 'max:100'],
             'purchase_order_observations' => ['nullable', 'string'],
         ], [
-            'name.unique' => 'Ya existe un producto con este nombre.',
             'variants.*.size.required' => 'La talla es obligatoria para todas las variantes.',
             'variants.*.stocks.required' => 'El stock por tienda es obligatorio.'
         ]);
