@@ -19,6 +19,17 @@ class AdminMiddleware
             ], 403);
         }
 
+        if ($user->is_helper) {
+            $path = $request->path();
+            // Helpers can ONLY access products and categories
+            if (!str_contains($path, 'products') && !str_contains($path, 'categories') && !str_contains($path, 'stores')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Acceso restringido para el rol de Vendedor Ayudante.'
+                ], 403);
+            }
+        }
+
         return $next($request);
     }
 }

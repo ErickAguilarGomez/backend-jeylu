@@ -20,7 +20,7 @@ class UserRepository
             WHERE 1=1
         ";
         $selectQuery = "
-            SELECT u.id, u.name, u.email, u.role_id, r.name as role_name, u.created_at, u2.name as created_by_name,
+            SELECT u.id, u.name, u.email, u.role_id, u.is_helper, r.name as role_name, u.created_at, u2.name as created_by_name,
                    su.store_id, s.name as store_name
             FROM users u
             INNER JOIN roles r ON u.role_id = r.id
@@ -58,7 +58,7 @@ class UserRepository
     public function getAll()
     {
         return DB::select("
-            SELECT u.id, u.name, u.email, u.role_id, r.name as role_name, u.created_at, u2.name as created_by_name,
+            SELECT u.id, u.name, u.email, u.role_id, u.is_helper, r.name as role_name, u.created_at, u2.name as created_by_name,
                    su.store_id, s.name as store_name
             FROM users u
             INNER JOIN roles r ON u.role_id = r.id
@@ -78,8 +78,9 @@ class UserRepository
     public function create(array $data, int $creatorId)
     {
         $hashed = Hash::make($data['password']);
-        DB::insert("INSERT INTO users (role_id, name, email, password, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())", [
-            $data['role_id'], $data['name'], $data['email'], $hashed, $creatorId, $creatorId
+        $isHelper = isset($data['is_helper']) && $data['is_helper'] ? 1 : 0;
+        DB::insert("INSERT INTO users (role_id, is_helper, name, email, password, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())", [
+            $data['role_id'], $isHelper, $data['name'], $data['email'], $hashed, $creatorId, $creatorId
         ]);
 
         $id = DB::getPdo()->lastInsertId();
@@ -88,13 +89,14 @@ class UserRepository
 
     public function update(int $id, array $data, int $updaterId)
     {
-        $params = [$data['role_id'], $data['name'], $data['email'], $updaterId, $id];
-        $sql = "UPDATE users SET role_id = ?, name = ?, email = ?, updated_by = ?, updated_at = NOW() WHERE id = ?";
+        $isHelper = isset($data['is_helper']) && $data['is_helper'] ? 1 : 0;
+        $params = [$data['role_id'], $isHelper, $data['name'], $data['email'], $updaterId, $id];
+        $sql = "UPDATE users SET role_id = ?, is_helper = ?, name = ?, email = ?, updated_by = ?, updated_at = NOW() WHERE id = ?";
 
         if (!empty($data['password'])) {
             $hashed = Hash::make($data['password']);
-            $params = [$data['role_id'], $data['name'], $data['email'], $hashed, $updaterId, $id];
-            $sql = "UPDATE users SET role_id = ?, name = ?, email = ?, password = ?, updated_by = ?, updated_at = NOW() WHERE id = ?";
+            $params = [$data['role_id'], $isHelper, $data['name'], $data['email'], $hashed, $updaterId, $id];
+            $sql = "UPDATE users SET role_id = ?, is_helper = ?, name = ?, email = ?, password = ?, updated_by = ?, updated_at = NOW() WHERE id = ?";
         }
 
         return DB::update($sql, $params);

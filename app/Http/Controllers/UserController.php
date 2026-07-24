@@ -32,11 +32,11 @@ class UserController extends Controller
         if ($request->has('all')) {
             $users = $this->userRepo->getAll();
             
-            $roleId = $request->has('role_id') ? (int) $request->query('role_id') : 3;
+            $roleId = $request->has('role_id') ? (int) $request->query('role_id') : null;
             $unassignedOnly = $request->query('unassigned') == 1;
 
             $filtered = array_filter($users, function($u) use ($roleId, $unassignedOnly) {
-                if ((int)$u->role_id !== $roleId) {
+                if ($roleId !== null && (int)$u->role_id !== $roleId) {
                     return false;
                 }
                 if ($unassignedOnly) {
@@ -71,7 +71,8 @@ class UserController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255|unique:users',
             'password' => 'required|string|min:6',
-            'role_id' => 'required|integer|exists:roles,id'
+            'role_id' => 'required|integer|exists:roles,id',
+            'is_helper' => 'nullable|boolean'
         ];
 
         if ($request->input('role_id') == 2) {
@@ -105,7 +106,8 @@ class UserController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255|unique:users,email,' . $id,
             'password' => 'nullable|string|min:6',
-            'role_id' => 'required|integer|exists:roles,id'
+            'role_id' => 'required|integer|exists:roles,id',
+            'is_helper' => 'nullable|boolean'
         ];
 
         if ($request->input('role_id') == 2) {

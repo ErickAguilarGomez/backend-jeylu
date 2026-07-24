@@ -47,6 +47,7 @@ class AuthController extends Controller
                     'email' => $user->email,
                     'role_id' => $user->role_id,
                     'role_name' => $role,
+                    'is_helper' => (bool) $user->is_helper,
                     'primary_store' => $primaryStore
                 ],
                 'token' => csrf_token(),
@@ -106,6 +107,7 @@ class AuthController extends Controller
                 'email' => $user->email,
                 'role_id' => $user->role_id,
                 'role_name' => $role,
+                'is_helper' => (bool) $user->is_helper,
                 'primary_store' => $primaryStore
             ]
         ]);

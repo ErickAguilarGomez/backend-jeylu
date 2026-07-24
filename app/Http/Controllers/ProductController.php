@@ -82,6 +82,10 @@ class ProductController extends Controller
             } else {
                 $item->discounted_price = $originalPrice;
             }
+
+            if (Auth::check() && Auth::user()->is_helper) {
+                $item->purchase_price = 0.00;
+            }
         }
         return $products;
     }
@@ -296,7 +300,7 @@ class ProductController extends Controller
             'description' => $validated['description'] ?? null,
             'video_url' => $validated['video_url'] ?? null,
             'price' => $validated['price'],
-            'purchase_price' => $validated['purchase_price'] ?? 0.00,
+            'purchase_price' => (Auth::check() && Auth::user()->is_helper) ? 0.00 : ($validated['purchase_price'] ?? 0.00),
             'images' => $processedImages,
             'variants' => $processedVariants
         ];
@@ -407,7 +411,7 @@ class ProductController extends Controller
             'category_id' => $validated['category_id'],
             'name' => $validated['name'],
             'price' => $validated['price'],
-            'purchase_price' => $validated['purchase_price'] ?? 0.00,
+            'purchase_price' => (Auth::check() && Auth::user()->is_helper) ? $product->purchase_price : ($validated['purchase_price'] ?? 0.00),
             'description' => $validated['description'] ?? null,
             'video_url' => $validated['video_url'] ?? null,
             'variants' => $processedVariants
