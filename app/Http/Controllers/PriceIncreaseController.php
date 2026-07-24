@@ -6,7 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 
-class DiscountController extends Controller
+class PriceIncreaseController extends Controller
 {
     public function show()
     {
@@ -30,9 +30,9 @@ class DiscountController extends Controller
             'percentage' => ['required', 'numeric', 'min:1', 'max:100'],
             'is_active' => ['nullable', 'boolean']
         ], [
-            'percentage.required' => 'El porcentaje de descuento es obligatorio.',
-            'percentage.min' => 'El descuento debe ser de al menos 1%.',
-            'percentage.max' => 'El descuento no puede superar el 100%.'
+            'percentage.required' => 'El porcentaje de aumento es obligatorio.',
+            'percentage.min' => 'El aumento debe ser de al menos 1%.',
+            'percentage.max' => 'El aumento no puede superar el 100%.'
         ]);
 
         $percentage = (float) $validated['percentage'];
@@ -59,7 +59,7 @@ class DiscountController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Descuento general guardado exitosamente.',
+            'message' => 'Aumento general guardado exitosamente.',
             'data' => $discount
         ]);
     }
@@ -71,7 +71,7 @@ class DiscountController extends Controller
         if (empty($existing)) {
             return response()->json([
                 'success' => false,
-                'message' => 'No hay un descuento general configurado.'
+                'message' => 'No hay un aumento general configurado.'
             ], 404);
         }
 
@@ -88,7 +88,7 @@ class DiscountController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => $updated->is_active ? 'Descuento general activado.' : 'Descuento general desactivado.',
+            'message' => $updated->is_active ? 'Aumento general activado.' : 'Aumento general desactivado.',
             'data' => $updated
         ]);
     }

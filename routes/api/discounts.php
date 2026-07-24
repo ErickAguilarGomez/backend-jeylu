@@ -1,11 +1,11 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\DiscountController;
+use App\Http\Controllers\PriceIncreaseController;
 
-Route::get('/general', [DiscountController::class, 'show']);
+Route::get('/general', [PriceIncreaseController::class, 'show']);
 
 Route::middleware(['auth:sanctum', 'admin'])->group(function () {
-    Route::post('/general', [DiscountController::class, 'upsert']);
-    Route::patch('/general/toggle', [DiscountController::class, 'toggle']);
+    Route::post('/general', [PriceIncreaseController::class, 'upsert']);
+    Route::patch('/general/toggle', [PriceIncreaseController::class, 'toggle']);
 });
