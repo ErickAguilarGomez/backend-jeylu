@@ -76,8 +76,8 @@ class ProductController extends Controller
             $item->discount_type = $discountType;
 
             if ($discountPct > 0) {
-                $discountAmount = round($originalPrice * ($discountPct / 100), 2);
-                $item->price = max(0.00, round($originalPrice - $discountAmount, 2));
+                $increaseAmount = round($originalPrice * ($discountPct / 100), 2);
+                $item->price = round($originalPrice + $increaseAmount, 2);
                 $item->discounted_price = $item->price;
             } else {
                 $item->discounted_price = $originalPrice;
