@@ -26,7 +26,7 @@ class ProductController extends Controller
     {
         $user = Auth::user();
         
-        if (!$user || $user->role_id != 2) {
+        if (!$user || $user->role_id != 2 || $user->is_helper) {
             return null;
         }
 
@@ -104,7 +104,7 @@ class ProductController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $this->formatProducts($result['data'], false),
+            'data' => $this->formatProducts($result['data'], true),
             'meta' => [
                 'total' => $result['total'],
                 'current_page' => $result['current_page'],
