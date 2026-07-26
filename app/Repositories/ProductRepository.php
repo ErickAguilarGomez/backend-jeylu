@@ -9,15 +9,22 @@ class ProductRepository
     public function getPaginated(int $page = 1, int $perPage = 10, string $search = '', ?int $storeId = null, ?int $categoryId = null, bool $includeDeleted = false)
     {
         $offset = ($page - 1) * $perPage;
-        $params = [];
         $countParams = [];
 
-        $countQuery = "
-            SELECT COUNT(DISTINCT p.id) as total 
-            FROM products p 
-            LEFT JOIN product_variants pv ON p.id = pv.product_id
-            WHERE 1=1
-        ";
+        if ($search !== '') {
+            $countQuery = "
+                SELECT COUNT(DISTINCT p.id) as total 
+                FROM products p 
+                LEFT JOIN product_variants pv ON p.id = pv.product_id
+                WHERE 1=1
+            ";
+        } else {
+            $countQuery = "
+                SELECT COUNT(p.id) as total 
+                FROM products p 
+                WHERE 1=1
+            ";
+        }
 
         if (!$includeDeleted) {
             $countQuery .= " AND p.deleted_at IS NULL";
@@ -35,16 +42,75 @@ class ProductRepository
             $countParams[] = "%$search%";
         }
 
+        $totalCount = (int) (DB::select($countQuery, $countParams)[0]->total ?? 0);
+
+        if ($totalCount === 0) {
+            return [
+                'data' => [],
+                'total' => 0,
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'last_page' => 1
+            ];
+        }
+
+        // 1. Obtener solo los IDs de la página solicitada (filtrado ultrarrápido)
+        $idParams = [];
+        if ($search !== '') {
+            $idQuery = "
+                SELECT DISTINCT p.id
+                FROM products p
+                LEFT JOIN product_variants pv ON p.id = pv.product_id
+                WHERE 1=1
+            ";
+        } else {
+            $idQuery = "
+                SELECT p.id
+                FROM products p
+                WHERE 1=1
+            ";
+        }
+
+        if (!$includeDeleted) {
+            $idQuery .= " AND p.deleted_at IS NULL";
+        }
+
+        if ($categoryId) {
+            $idQuery .= " AND p.category_id = ?";
+            $idParams[] = $categoryId;
+        }
+
+        if ($search !== '') {
+            $idQuery .= " AND (p.name LIKE ? OR p.base_sku LIKE ? OR pv.sku LIKE ?)";
+            $idParams[] = "%$search%";
+            $idParams[] = "%$search%";
+            $idParams[] = "%$search%";
+        }
+
+        $idQuery .= " ORDER BY p.id DESC LIMIT ? OFFSET ?";
+        $idParams[] = $perPage;
+        $idParams[] = $offset;
+
+        $idRows = DB::select($idQuery, $idParams);
+        $productIds = array_map(fn($row) => $row->id, $idRows);
+
+        if (empty($productIds)) {
+            return [
+                'data' => [],
+                'total' => $totalCount,
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'last_page' => (int) ceil($totalCount / $perPage) ?: 1
+            ];
+        }
+
+        // 2. Cargar detalles e imágenes/stock ÚNICAMENTE para los IDs seleccionados
+        $placeholders = implode(',', array_fill(0, count($productIds), '?'));
+
         if ($storeId) {
             $selectQuery = "
                 SELECT p.id, p.category_id, p.store_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.adjustment_type, p.adjustment_value, p.deleted_at,
                        (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
-                       (COALESCE((
-                           SELECT SUM(si.stock) 
-                           FROM store_inventories si 
-                           INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
-                           WHERE pv2.product_id = p.id AND si.store_id = ?
-                       ), 0) > 0) as is_available,
                        COALESCE((
                            SELECT SUM(si.stock) 
                            FROM store_inventories si 
@@ -52,24 +118,14 @@ class ProductRepository
                            WHERE pv2.product_id = p.id AND si.store_id = ?
                        ), 0) as total_stock
                 FROM products p
-                LEFT JOIN product_variants pv ON p.id = pv.product_id
-                WHERE 1=1
+                WHERE p.id IN ($placeholders)
+                ORDER BY p.id DESC
             ";
-            if (!$includeDeleted) {
-                $selectQuery .= " AND p.deleted_at IS NULL";
-            }
-            $params[] = $storeId;
-            $params[] = $storeId;
+            $selectParams = array_merge([$storeId], $productIds);
         } else {
             $selectQuery = "
                 SELECT p.id, p.category_id, p.store_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.adjustment_type, p.adjustment_value, p.deleted_at,
                        (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
-                       (COALESCE((
-                           SELECT SUM(si.stock) 
-                           FROM store_inventories si 
-                           INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
-                           WHERE pv2.product_id = p.id
-                       ), 0) > 0) as is_available,
                        COALESCE((
                            SELECT SUM(si.stock) 
                            FROM store_inventories si 
@@ -77,32 +133,18 @@ class ProductRepository
                            WHERE pv2.product_id = p.id
                        ), 0) as total_stock
                 FROM products p
-                LEFT JOIN product_variants pv ON p.id = pv.product_id
-                WHERE 1=1
+                WHERE p.id IN ($placeholders)
+                ORDER BY p.id DESC
             ";
-            if (!$includeDeleted) {
-                $selectQuery .= " AND p.deleted_at IS NULL";
-            }
+            $selectParams = $productIds;
         }
 
-        if ($categoryId) {
-            $selectQuery .= " AND p.category_id = ?";
-            $params[] = $categoryId;
+        $data = DB::select($selectQuery, $selectParams);
+
+        foreach ($data as $item) {
+            $item->is_available = ((float) ($item->total_stock ?? 0)) > 0;
         }
 
-        if ($search !== '') {
-            $selectQuery .= " AND (p.name LIKE ? OR p.base_sku LIKE ? OR pv.sku LIKE ?)";
-            $params[] = "%$search%";
-            $params[] = "%$search%";
-            $params[] = "%$search%";
-        }
-
-        $selectQuery .= " GROUP BY p.id, p.category_id, p.store_id, p.base_sku, p.name, p.price, p.purchase_price, p.adjustment_type, p.adjustment_value, p.deleted_at ORDER BY p.id DESC LIMIT ? OFFSET ?";
-        $params[] = $perPage;
-        $params[] = $offset;
-
-        $totalCount = DB::select($countQuery, $countParams)[0]->total;
-        $data = DB::select($selectQuery, $params);
         $lastPage = (int) ceil($totalCount / $perPage);
 
         return [
