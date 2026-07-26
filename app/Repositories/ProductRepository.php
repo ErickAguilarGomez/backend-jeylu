@@ -37,7 +37,7 @@ class ProductRepository
 
         if ($storeId) {
             $selectQuery = "
-                SELECT p.id, p.category_id, p.store_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.deleted_at,
+                SELECT p.id, p.category_id, p.store_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.adjustment_type, p.adjustment_value, p.deleted_at,
                        (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
                        (COALESCE((
                            SELECT SUM(si.stock) 
@@ -62,7 +62,7 @@ class ProductRepository
             $params[] = $storeId;
         } else {
             $selectQuery = "
-                SELECT p.id, p.category_id, p.store_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.deleted_at,
+                SELECT p.id, p.category_id, p.store_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.adjustment_type, p.adjustment_value, p.deleted_at,
                        (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
                        (COALESCE((
                            SELECT SUM(si.stock) 
@@ -97,7 +97,7 @@ class ProductRepository
             $params[] = "%$search%";
         }
 
-        $selectQuery .= " GROUP BY p.id, p.category_id, p.store_id, p.base_sku, p.name, p.price, p.purchase_price, p.deleted_at ORDER BY p.id DESC LIMIT ? OFFSET ?";
+        $selectQuery .= " GROUP BY p.id, p.category_id, p.store_id, p.base_sku, p.name, p.price, p.purchase_price, p.adjustment_type, p.adjustment_value, p.deleted_at ORDER BY p.id DESC LIMIT ? OFFSET ?";
         $params[] = $perPage;
         $params[] = $offset;
 
@@ -128,7 +128,7 @@ class ProductRepository
 
         if ($storeId) {
             $sql = "
-                SELECT p.id, p.category_id, p.store_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.deleted_at,
+                SELECT p.id, p.category_id, p.store_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.adjustment_type, p.adjustment_value, p.deleted_at,
                        (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
                        (COALESCE((
                            SELECT SUM(si.stock) 
@@ -221,7 +221,7 @@ class ProductRepository
         }
 
         $product = DB::select("
-            SELECT p.id, p.category_id, p.store_id, p.purchase_order_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.deleted_at, p.description, p.video_url,
+            SELECT p.id, p.category_id, p.store_id, p.purchase_order_id, p.base_sku as sku, p.name, p.price, p.purchase_price, p.adjustment_type, p.adjustment_value, p.deleted_at, p.description, p.video_url,
                    c.name as category_name, c.unit_of_measure, s.name as store_name, s.address as store_address, s.phone as store_phone,
                    (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as image_url,
                    COALESCE((
@@ -301,9 +301,12 @@ class ProductRepository
         try {
             $userId = auth()->id();
             $timestamp = now();
+            $adjType = !empty($data['adjustment_type']) ? $data['adjustment_type'] : null;
+            $adjValue = (!empty($adjType) && isset($data['adjustment_value'])) ? (float)$data['adjustment_value'] : null;
+
             DB::insert("
-                INSERT INTO products (base_sku, category_id, store_id, purchase_order_id, name, description, video_url, price, purchase_price, created_by, updated_by, created_at, updated_at) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO products (base_sku, category_id, store_id, purchase_order_id, name, description, video_url, price, purchase_price, adjustment_type, adjustment_value, created_by, updated_by, created_at, updated_at) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ", [
                 $data['base_sku'],
                 $data['category_id'],
@@ -314,6 +317,8 @@ class ProductRepository
                 $data['video_url'] ?? null,
                 (float) $data['price'],
                 (float) $data['purchase_price'],
+                $adjType,
+                $adjValue,
                 $userId,
                 $userId,
                 $timestamp,
@@ -384,9 +389,12 @@ class ProductRepository
         try {
             $userId = auth()->id();
             $timestamp = now();
+            $adjType = !empty($data['adjustment_type']) ? $data['adjustment_type'] : null;
+            $adjValue = (!empty($adjType) && isset($data['adjustment_value'])) ? (float)$data['adjustment_value'] : null;
+
             DB::update("
                 UPDATE products 
-                SET category_id = ?, store_id = ?, purchase_order_id = ?, name = ?, description = ?, video_url = ?, price = ?, purchase_price = ?, updated_by = ?, updated_at = ? 
+                SET category_id = ?, store_id = ?, purchase_order_id = ?, name = ?, description = ?, video_url = ?, price = ?, purchase_price = ?, adjustment_type = ?, adjustment_value = ?, updated_by = ?, updated_at = ? 
                 WHERE base_sku = ?
             ", [
                 $data['category_id'],
@@ -397,6 +405,8 @@ class ProductRepository
                 $data['video_url'] ?? null,
                 (float) $data['price'],
                 (float) $data['purchase_price'],
+                $adjType,
+                $adjValue,
                 $userId,
                 $timestamp,
                 $baseSku

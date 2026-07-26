@@ -15,11 +15,20 @@ class SaleService
         $this->saleRepo = $saleRepo;
     }
 
-    public function processSale(int $sellerId, int $storeId, array $items, ?int $customerId = null, ?string $customerName = null)
+    public function processSale(int $sellerId, int $storeId, array $items, ?int $customerId = null, ?string $customerName = null, ?int $paymentMethodId = null)
     {
         DB::beginTransaction();
 
         try {
+            $paymentMethodName = 'Efectivo';
+            if ($paymentMethodId) {
+                $pm = DB::select("SELECT id, name, is_active FROM payment_methods WHERE id = ? LIMIT 1", [$paymentMethodId]);
+                if (empty($pm) || !$pm[0]->is_active) {
+                    throw new Exception("La forma de pago seleccionada no está activa o no es válida.");
+                }
+                $paymentMethodName = $pm[0]->name;
+            }
+
             if ($customerId && empty($customerName)) {
                 $user = DB::select("SELECT name FROM users WHERE id = ? LIMIT 1", [$customerId]);
                 if (!empty($user)) {
@@ -87,7 +96,9 @@ class SaleService
                 $total, 
                 $processedItems,
                 $commissionPercentage,
-                $commissionAmount
+                $commissionAmount,
+                $paymentMethodId,
+                $paymentMethodName
             );
 
             DB::commit();

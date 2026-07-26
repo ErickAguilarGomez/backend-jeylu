@@ -49,9 +49,23 @@ class CategoryController extends Controller
             'name' => 'required|string|max:255|unique:categories',
             'description' => 'nullable|string|max:500',
             'unit_of_measure' => 'nullable|string|max:50',
+            'adjustment_type' => 'nullable|string|in:increase,discount',
+            'adjustment_value' => 'nullable|numeric|min:0|max:100',
             'discount_enabled' => 'nullable|boolean',
-            'discount_percentage' => 'nullable|numeric|min:1|max:100'
+            'discount_percentage' => 'nullable|numeric|min:0|max:100'
+        ], [
+            'name.unique' => 'El nombre de la categoría ya está registrado.',
+            'adjustment_type.in' => 'El tipo de ajuste debe ser Incremento o Descuento.',
+            'adjustment_value.min' => 'El valor del ajuste no puede ser negativo.',
+            'adjustment_value.max' => 'El valor del ajuste no puede superar el 100%.'
         ]);
+
+        if (!empty($validated['adjustment_value']) && (float)$validated['adjustment_value'] > 0 && empty($validated['adjustment_type'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Debe seleccionar el tipo de ajuste (Incremento o Descuento) si ingresa un valor.'
+            ], 422);
+        }
 
         $category = $this->categoryRepo->create($validated, Auth::id());
 
@@ -68,13 +82,23 @@ class CategoryController extends Controller
             'name' => 'required|string|max:255|unique:categories,name,' . $id,
             'description' => 'nullable|string|max:500',
             'unit_of_measure' => 'nullable|string|max:50',
+            'adjustment_type' => 'nullable|string|in:increase,discount',
+            'adjustment_value' => 'nullable|numeric|min:0|max:100',
             'discount_enabled' => 'nullable|boolean',
-            'discount_percentage' => 'nullable|numeric|min:1|max:100'
+            'discount_percentage' => 'nullable|numeric|min:0|max:100'
         ], [
             'name.unique' => 'El nombre de la categoría ya está registrado.',
-            'discount_percentage.min' => 'El descuento debe ser de al menos 1%.',
-            'discount_percentage.max' => 'El descuento no puede superar el 100%.'
+            'adjustment_type.in' => 'El tipo de ajuste debe ser Incremento o Descuento.',
+            'adjustment_value.min' => 'El valor del ajuste no puede ser negativo.',
+            'adjustment_value.max' => 'El valor del ajuste no puede superar el 100%.'
         ]);
+
+        if (!empty($validated['adjustment_value']) && (float)$validated['adjustment_value'] > 0 && empty($validated['adjustment_type'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Debe seleccionar el tipo de ajuste (Incremento o Descuento) si ingresa un valor.'
+            ], 422);
+        }
 
         $this->categoryRepo->update($id, $validated, Auth::id());
 

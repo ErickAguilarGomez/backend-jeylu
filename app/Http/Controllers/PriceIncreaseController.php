@@ -10,13 +10,25 @@ class PriceIncreaseController extends Controller
 {
     public function show()
     {
-        $discount = DB::select("SELECT * FROM general_discounts ORDER BY id ASC LIMIT 1");
+        $row = DB::select("SELECT * FROM general_discounts ORDER BY id ASC LIMIT 1");
 
-        $data = !empty($discount) ? $discount[0] : [
-            'id' => null,
-            'percentage' => 0.00,
-            'is_active' => false
-        ];
+        if (!empty($row)) {
+            $data = [
+                'id' => $row[0]->id,
+                'type' => $row[0]->type ?? 'increase',
+                'value' => (float)($row[0]->value ?? $row[0]->percentage ?? 0.00),
+                'percentage' => (float)($row[0]->value ?? $row[0]->percentage ?? 0.00),
+                'is_active' => (bool)$row[0]->is_active
+            ];
+        } else {
+            $data = [
+                'id' => null,
+                'type' => 'increase',
+                'value' => 0.00,
+                'percentage' => 0.00,
+                'is_active' => false
+            ];
+        }
 
         return response()->json([
             'success' => true,
@@ -27,15 +39,19 @@ class PriceIncreaseController extends Controller
     public function upsert(Request $request)
     {
         $validated = $request->validate([
-            'percentage' => ['required', 'numeric', 'min:1', 'max:100'],
+            'type' => ['required', 'string', 'in:increase,discount'],
+            'value' => ['required', 'numeric', 'min:0', 'max:100'],
             'is_active' => ['nullable', 'boolean']
         ], [
-            'percentage.required' => 'El porcentaje de aumento es obligatorio.',
-            'percentage.min' => 'El aumento debe ser de al menos 1%.',
-            'percentage.max' => 'El aumento no puede superar el 100%.'
+            'type.required' => 'El tipo de ajuste (Incremento o Descuento) es obligatorio.',
+            'type.in' => 'El tipo de ajuste debe ser Incremento o Descuento.',
+            'value.required' => 'El valor del ajuste es obligatorio.',
+            'value.min' => 'El valor del ajuste no puede ser negativo.',
+            'value.max' => 'El valor del ajuste no puede superar el 100%.'
         ]);
 
-        $percentage = (float) $validated['percentage'];
+        $type = $validated['type'];
+        $value = (float) $validated['value'];
         $isActive = isset($validated['is_active']) ? (bool)$validated['is_active'] : true;
         $userId = Auth::id();
 
@@ -45,23 +61,17 @@ class PriceIncreaseController extends Controller
             $id = $existing[0]->id;
             DB::update("
                 UPDATE general_discounts 
-                SET percentage = ?, is_active = ?, updated_by = ?, updated_at = NOW()
+                SET type = ?, value = ?, percentage = ?, is_active = ?, updated_by = ?, updated_at = NOW()
                 WHERE id = ?
-            ", [$percentage, $isActive ? 1 : 0, $userId, $id]);
+            ", [$type, $value, $value, $isActive ? 1 : 0, $userId, $id]);
         } else {
             DB::insert("
-                INSERT INTO general_discounts (percentage, is_active, created_by, updated_by, created_at, updated_at)
-                VALUES (?, ?, ?, ?, NOW(), NOW())
-            ", [$percentage, $isActive ? 1 : 0, $userId, $userId]);
+                INSERT INTO general_discounts (type, value, percentage, is_active, created_by, updated_by, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+            ", [$type, $value, $value, $isActive ? 1 : 0, $userId, $userId]);
         }
 
-        $discount = DB::select("SELECT * FROM general_discounts ORDER BY id ASC LIMIT 1")[0];
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Aumento general guardado exitosamente.',
-            'data' => $discount
-        ]);
+        return $this->show();
     }
 
     public function toggle()
@@ -71,7 +81,7 @@ class PriceIncreaseController extends Controller
         if (empty($existing)) {
             return response()->json([
                 'success' => false,
-                'message' => 'No hay un aumento general configurado.'
+                'message' => 'No hay un ajuste general configurado.'
             ], 404);
         }
 
@@ -84,12 +94,6 @@ class PriceIncreaseController extends Controller
             WHERE id = ?
         ", [$newActive, $userId, $existing[0]->id]);
 
-        $updated = DB::select("SELECT * FROM general_discounts WHERE id = ?", [$existing[0]->id])[0];
-
-        return response()->json([
-            'success' => true,
-            'message' => $updated->is_active ? 'Aumento general activado.' : 'Aumento general desactivado.',
-            'data' => $updated
-        ]);
+        return $this->show();
     }
 }

@@ -12,5 +12,6 @@ Route::prefix('banners')->group(base_path('routes/api/banners.php'));
 Route::prefix('settings')->group(base_path('routes/api/settings.php'));
 Route::prefix('purchase-orders')->group(base_path('routes/api/purchase-orders.php'));
 Route::prefix('discounts')->group(base_path('routes/api/discounts.php'));
+Route::prefix('payment-methods')->group(base_path('routes/api/payment_methods.php'));
 
 

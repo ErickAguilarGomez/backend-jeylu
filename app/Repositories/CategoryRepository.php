@@ -14,7 +14,7 @@ class CategoryRepository
 
         $countQuery = "SELECT COUNT(c.id) as total FROM categories c WHERE 1=1";
         $selectQuery = "
-            SELECT c.id, c.name, c.description, c.unit_of_measure, c.discount_enabled, c.discount_percentage, c.created_at, u.name as created_by_name
+            SELECT c.id, c.name, c.description, c.unit_of_measure, c.adjustment_type, c.adjustment_value, c.discount_enabled, c.discount_percentage, c.created_at, u.name as created_by_name
             FROM categories c
             LEFT JOIN users u ON c.created_by = u.id
             WHERE 1=1
@@ -48,7 +48,7 @@ class CategoryRepository
     public function getAll()
     {
         return DB::select("
-            SELECT c.id, c.name, c.description, c.unit_of_measure, c.discount_enabled, c.discount_percentage, c.created_at, u.name as created_by_name,
+            SELECT c.id, c.name, c.description, c.unit_of_measure, c.adjustment_type, c.adjustment_value, c.discount_enabled, c.discount_percentage, c.created_at, u.name as created_by_name,
                    (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id) as products_count
             FROM categories c
             LEFT JOIN users u ON c.created_by = u.id
@@ -66,11 +66,20 @@ class CategoryRepository
     {
         $timestamp = now();
         $unitOfMeasure = $data['unit_of_measure'] ?? null;
-        $discountEnabled = isset($data['discount_enabled']) && $data['discount_enabled'] ? 1 : 0;
-        $discountPct = ($discountEnabled && isset($data['discount_percentage'])) ? (float)$data['discount_percentage'] : null;
+        
+        $adjustmentType = !empty($data['adjustment_type']) ? $data['adjustment_type'] : null;
+        $adjustmentValue = (!empty($adjustmentType) && isset($data['adjustment_value'])) ? (float)$data['adjustment_value'] : null;
+        
+        // Fallback for legacy discount_enabled fields
+        if (empty($adjustmentType) && !empty($data['discount_enabled'])) {
+            $adjustmentType = 'increase';
+            $adjustmentValue = isset($data['discount_percentage']) ? (float)$data['discount_percentage'] : null;
+        }
 
-        DB::insert("INSERT INTO categories (name, description, unit_of_measure, discount_enabled, discount_percentage, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-            $data['name'], $data['description'] ?? null, $unitOfMeasure, $discountEnabled, $discountPct, $userId, $userId, $timestamp, $timestamp
+        $discountEnabled = (!empty($adjustmentType) && $adjustmentValue > 0) ? 1 : 0;
+
+        DB::insert("INSERT INTO categories (name, description, unit_of_measure, adjustment_type, adjustment_value, discount_enabled, discount_percentage, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+            $data['name'], $data['description'] ?? null, $unitOfMeasure, $adjustmentType, $adjustmentValue, $discountEnabled, $adjustmentValue, $userId, $userId, $timestamp, $timestamp
         ]);
 
         $id = DB::getPdo()->lastInsertId();
@@ -80,11 +89,20 @@ class CategoryRepository
     public function update(int $id, array $data, int $userId)
     {
         $unitOfMeasure = $data['unit_of_measure'] ?? null;
-        $discountEnabled = isset($data['discount_enabled']) && $data['discount_enabled'] ? 1 : 0;
-        $discountPct = ($discountEnabled && isset($data['discount_percentage'])) ? (float)$data['discount_percentage'] : null;
 
-        return DB::update("UPDATE categories SET name = ?, description = ?, unit_of_measure = ?, discount_enabled = ?, discount_percentage = ?, updated_by = ?, updated_at = ? WHERE id = ?", [
-            $data['name'], $data['description'] ?? null, $unitOfMeasure, $discountEnabled, $discountPct, $userId, now(), $id
+        $adjustmentType = !empty($data['adjustment_type']) ? $data['adjustment_type'] : null;
+        $adjustmentValue = (!empty($adjustmentType) && isset($data['adjustment_value'])) ? (float)$data['adjustment_value'] : null;
+        
+        // Fallback for legacy discount_enabled fields
+        if (empty($adjustmentType) && !empty($data['discount_enabled'])) {
+            $adjustmentType = 'increase';
+            $adjustmentValue = isset($data['discount_percentage']) ? (float)$data['discount_percentage'] : null;
+        }
+
+        $discountEnabled = (!empty($adjustmentType) && $adjustmentValue > 0) ? 1 : 0;
+
+        return DB::update("UPDATE categories SET name = ?, description = ?, unit_of_measure = ?, adjustment_type = ?, adjustment_value = ?, discount_enabled = ?, discount_percentage = ?, updated_by = ?, updated_at = ? WHERE id = ?", [
+            $data['name'], $data['description'] ?? null, $unitOfMeasure, $adjustmentType, $adjustmentValue, $discountEnabled, $adjustmentValue, $userId, now(), $id
         ]);
     }
 

@@ -186,9 +186,13 @@ class SaleController extends Controller
             'items.*.sku' => ['required', 'string'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
             'items.*.price' => ['nullable', 'numeric', 'min:0'],
+            'payment_method_id' => ['required', 'integer', 'exists:payment_methods,id'],
             'customer_id' => ['nullable', 'integer', 'exists:users,id'],
             'customer_name' => ['nullable', 'string', 'max:255'],
             'store_id' => ['nullable', 'integer', 'exists:stores,id']
+        ], [
+            'payment_method_id.required' => 'Debe seleccionar una forma de pago para procesar la venta.',
+            'payment_method_id.exists' => 'La forma de pago seleccionada no es válida o no existe.'
         ]);
 
         $userId = $user ? $user->id : 1;
@@ -215,7 +219,8 @@ class SaleController extends Controller
                 $storeId,
                 $validated['items'],
                 $validated['customer_id'] ?? null,
-                $validated['customer_name'] ?? null
+                $validated['customer_name'] ?? null,
+                $validated['payment_method_id']
             );
             return response()->json($result, 201);
         } catch (Exception $e) {
