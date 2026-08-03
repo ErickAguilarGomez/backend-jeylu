@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\DB;
 
 class ProductRepository
 {
-    public function getPaginated(int $page = 1, int $perPage = 10, string $search = '', ?int $storeId = null, ?int $categoryId = null, bool $includeDeleted = false, bool $onlyWithStock = false)
+    public function getPaginated(int $page = 1, int $perPage = 10, string $search = '', ?int $storeId = null, ?int $categoryId = null, bool $includeDeleted = false, bool $onlyWithStock = false, bool $onlyDeleted = false)
     {
         $offset = ($page - 1) * $perPage;
         $countParams = [];
@@ -26,7 +26,9 @@ class ProductRepository
             ";
         }
 
-        if (!$includeDeleted) {
+        if ($onlyDeleted) {
+            $countQuery .= " AND p.deleted_at IS NOT NULL";
+        } else if (!$includeDeleted) {
             $countQuery .= " AND p.deleted_at IS NULL";
         }
 
@@ -80,7 +82,9 @@ class ProductRepository
             ";
         }
 
-        if (!$includeDeleted) {
+        if ($onlyDeleted) {
+            $idQuery .= " AND p.deleted_at IS NOT NULL";
+        } else if (!$includeDeleted) {
             $idQuery .= " AND p.deleted_at IS NULL";
         }
 
