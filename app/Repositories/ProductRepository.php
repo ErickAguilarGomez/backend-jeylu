@@ -271,8 +271,10 @@ class ProductRepository
         return $results;
     }
 
-    public function findBySku(string $sku, ?int $storeId = null)
+    public function findBySku(string $sku, ?int $storeId = null, bool $includeDeleted = false)
     {
+        $deletedCondition = $includeDeleted ? "" : "AND p.deleted_at IS NULL";
+
         if ($storeId) {
             $variant = DB::select("
                 SELECT pv.id as variant_id, pv.sku as variant_sku, pv.size, pv.color, 
@@ -286,7 +288,7 @@ class ProductRepository
                 INNER JOIN products p ON pv.product_id = p.id
                 LEFT JOIN categories c ON p.category_id = c.id
                 LEFT JOIN stores s ON p.store_id = s.id
-                WHERE pv.sku = ? LIMIT 1
+                WHERE pv.sku = ? $deletedCondition LIMIT 1
             ", [$storeId, $sku]);
         } else {
             $variant = DB::select("
@@ -301,13 +303,13 @@ class ProductRepository
                 INNER JOIN products p ON pv.product_id = p.id
                 LEFT JOIN categories c ON p.category_id = c.id
                 LEFT JOIN stores s ON p.store_id = s.id
-                WHERE pv.sku = ? LIMIT 1
+                WHERE pv.sku = ? $deletedCondition LIMIT 1
             ", [$sku]);
         }
 
         if (!empty($variant)) {
             $vObj = $variant[0];
-            $baseProduct = $this->findBySku($vObj->base_sku, $storeId);
+            $baseProduct = $this->findBySku($vObj->base_sku, $storeId, $includeDeleted);
             if ($baseProduct) {
                 $baseProduct->variant_sku = $vObj->variant_sku;
                 $baseProduct->size = $vObj->size;
@@ -331,7 +333,7 @@ class ProductRepository
             FROM products p 
             LEFT JOIN categories c ON p.category_id = c.id
             LEFT JOIN stores s ON p.store_id = s.id
-            WHERE p.base_sku = ? LIMIT 1
+            WHERE p.base_sku = ? $deletedCondition LIMIT 1
         ", [$sku]);
 
         if (empty($product)) {

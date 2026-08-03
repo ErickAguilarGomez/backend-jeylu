@@ -317,7 +317,7 @@ class ProductController extends Controller
 
     public function update(Request $request, string $baseSku)
     {
-        $product = $this->productRepo->findBySku($baseSku);
+        $product = $this->productRepo->findBySku($baseSku, null, true);
 
         if (!$product) {
             return response()->json([
@@ -437,7 +437,7 @@ class ProductController extends Controller
 
     public function destroy(string $sku)
     {
-        $product = $this->productRepo->findBySku($sku);
+        $product = $this->productRepo->findBySku($sku, null, true);
 
         if (!$product) {
             return response()->json([
