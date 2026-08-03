@@ -100,7 +100,7 @@ class ProductController extends Controller
         $categoryId = $request->query('category_id') ? (int) $request->query('category_id') : null;
         $includeDeleted = $request->query('include_deleted') == 1;
 
-        $result = $this->productRepo->getPaginated($page, $perPage, $search, $storeId, $categoryId, $includeDeleted);
+        $result = $this->productRepo->getPaginated($page, $perPage, $search, $storeId, $categoryId, $includeDeleted, true);
 
         return response()->json([
             'success' => true,

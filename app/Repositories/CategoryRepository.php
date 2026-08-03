@@ -49,7 +49,7 @@ class CategoryRepository
     {
         return DB::select("
             SELECT c.id, c.name, c.description, c.unit_of_measure, c.adjustment_type, c.adjustment_value, c.discount_enabled, c.discount_percentage, c.created_at, u.name as created_by_name,
-                   (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id) as products_count
+                   (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.deleted_at IS NULL) as products_count
             FROM categories c
             LEFT JOIN users u ON c.created_by = u.id
             ORDER BY c.name ASC

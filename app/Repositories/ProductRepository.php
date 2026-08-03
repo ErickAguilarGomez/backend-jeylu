@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\DB;
 
 class ProductRepository
 {
-    public function getPaginated(int $page = 1, int $perPage = 10, string $search = '', ?int $storeId = null, ?int $categoryId = null, bool $includeDeleted = false)
+    public function getPaginated(int $page = 1, int $perPage = 10, string $search = '', ?int $storeId = null, ?int $categoryId = null, bool $includeDeleted = false, bool $onlyWithStock = false)
     {
         $offset = ($page - 1) * $perPage;
         $countParams = [];
@@ -28,6 +28,15 @@ class ProductRepository
 
         if (!$includeDeleted) {
             $countQuery .= " AND p.deleted_at IS NULL";
+        }
+
+        if ($onlyWithStock) {
+            $countQuery .= " AND EXISTS (
+                SELECT 1 
+                FROM store_inventories si 
+                INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
+                WHERE pv2.product_id = p.id AND si.stock > 0
+            )";
         }
 
         if ($categoryId) {
@@ -75,6 +84,15 @@ class ProductRepository
             $idQuery .= " AND p.deleted_at IS NULL";
         }
 
+        if ($onlyWithStock) {
+            $idQuery .= " AND EXISTS (
+                SELECT 1 
+                FROM store_inventories si 
+                INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
+                WHERE pv2.product_id = p.id AND si.stock > 0
+            )";
+        }
+
         if ($categoryId) {
             $idQuery .= " AND p.category_id = ?";
             $idParams[] = $categoryId;
@@ -116,7 +134,13 @@ class ProductRepository
                            FROM store_inventories si 
                            INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
                            WHERE pv2.product_id = p.id AND si.store_id = ?
-                       ), 0) as total_stock
+                       ), 0) as total_stock,
+                       COALESCE((
+                           SELECT SUM(si.stock) 
+                           FROM store_inventories si 
+                           INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
+                           WHERE pv2.product_id = p.id
+                       ), 0) as global_stock
                 FROM products p
                 WHERE p.id IN ($placeholders)
                 ORDER BY p.id DESC
@@ -131,7 +155,13 @@ class ProductRepository
                            FROM store_inventories si 
                            INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
                            WHERE pv2.product_id = p.id
-                       ), 0) as total_stock
+                       ), 0) as total_stock,
+                       COALESCE((
+                           SELECT SUM(si.stock) 
+                           FROM store_inventories si 
+                           INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
+                           WHERE pv2.product_id = p.id
+                       ), 0) as global_stock
                 FROM products p
                 WHERE p.id IN ($placeholders)
                 ORDER BY p.id DESC
@@ -142,7 +172,9 @@ class ProductRepository
         $data = DB::select($selectQuery, $selectParams);
 
         foreach ($data as $item) {
-            $item->is_available = ((float) ($item->total_stock ?? 0)) > 0;
+            $item->total_stock = (float) ($item->total_stock ?? 0);
+            $item->global_stock = (float) ($item->global_stock ?? $item->total_stock);
+            $item->is_available = $item->total_stock > 0;
         }
 
         $lastPage = (int) ceil($totalCount / $perPage);
@@ -183,7 +215,13 @@ class ProductRepository
                            FROM store_inventories si 
                            INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
                            WHERE pv2.product_id = p.id AND si.store_id = ?
-                       ), 0) as total_stock
+                       ), 0) as total_stock,
+                       COALESCE((
+                           SELECT SUM(si.stock) 
+                           FROM store_inventories si 
+                           INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
+                           WHERE pv2.product_id = p.id
+                       ), 0) as global_stock
                 FROM products p 
                 $whereSql
                 GROUP BY p.id, p.category_id, p.store_id, p.base_sku, p.name, p.price, p.purchase_price, p.deleted_at
@@ -205,7 +243,13 @@ class ProductRepository
                            FROM store_inventories si 
                            INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
                            WHERE pv2.product_id = p.id
-                       ), 0) as total_stock
+                       ), 0) as total_stock,
+                       COALESCE((
+                           SELECT SUM(si.stock) 
+                           FROM store_inventories si 
+                           INNER JOIN product_variants pv2 ON si.variant_id = pv2.id 
+                           WHERE pv2.product_id = p.id
+                       ), 0) as global_stock
                 FROM products p 
                 $whereSql
                 GROUP BY p.id, p.category_id, p.store_id, p.base_sku, p.name, p.price, p.purchase_price, p.deleted_at
@@ -213,7 +257,14 @@ class ProductRepository
             ";
         }
 
-        return DB::select($sql, $params);
+        $results = DB::select($sql, $params);
+        foreach ($results as $item) {
+            $item->total_stock = (float) ($item->total_stock ?? 0);
+            $item->global_stock = (float) ($item->global_stock ?? $item->total_stock);
+            $item->is_available = (bool) $item->is_available;
+        }
+
+        return $results;
     }
 
     public function findBySku(string $sku, ?int $storeId = null)
