@@ -327,6 +327,7 @@ class ProductController extends Controller
         }
 
         $validated = $request->validate([
+            'base_sku' => ['nullable', 'string', 'max:100'],
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'store_id' => ['required', 'integer', 'exists:stores,id'],
             'name' => ['required', 'string', 'max:255'],
@@ -360,13 +361,23 @@ class ProductController extends Controller
             'variants.*.stocks.required' => 'El stock por tienda es obligatorio.'
         ]);
 
+        if (!empty($validated['base_sku']) && $validated['base_sku'] !== $baseSku) {
+            $existing = DB::select("SELECT id FROM products WHERE base_sku = ? AND id != ?", [$validated['base_sku'], $product->id]);
+            if (!empty($existing)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El código SKU ingresado ya pertenece a otro producto.'
+                ], 422);
+            }
+        }
+
         // Upload any new provided files
         if ($request->hasFile('images')) {
             $hasPrimary = DB::select("SELECT id FROM product_images WHERE product_id = ? AND is_primary = 1", [$product->id]);
             foreach ($request->file('images') as $file) {
                 $url = $this->cloudinaryService->upload($file, 'ecommerce_products');
                 DB::insert("
-                    INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at)
+                    INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at) 
                     VALUES (?, ?, ?, NOW(), NOW())
                 ", [$product->id, $url, empty($hasPrimary) ? 1 : 0]);
                 $hasPrimary = true;
@@ -380,7 +391,7 @@ class ProductController extends Controller
                     $exists = DB::select("SELECT id FROM product_images WHERE product_id = ? AND image_url = ?", [$product->id, $url]);
                     if (empty($exists)) {
                         DB::insert("
-                            INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at)
+                            INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at) 
                             VALUES (?, ?, ?, NOW(), NOW())
                         ", [$product->id, $url, empty($hasPrimary) ? 1 : 0]);
                         $hasPrimary = true;
@@ -395,7 +406,8 @@ class ProductController extends Controller
             $color = $v['color'] ?? null;
             
             $sizeClean = $size !== null && $size !== '' ? strtoupper(preg_replace('/[^A-Z0-9]/', '', $size)) : 'U';
-            $variantSku = $baseSku . '-' . $sizeClean;
+            $targetBaseSku = !empty($validated['base_sku']) ? $validated['base_sku'] : $baseSku;
+            $variantSku = $targetBaseSku . '-' . $sizeClean;
 
             $processedVariants[] = [
                 'id' => $v['id'] ?? null,
@@ -409,6 +421,7 @@ class ProductController extends Controller
         $purchaseOrderId = $this->resolvePurchaseOrderId($request, $validated);
         // If option is none, we explicitly clean it. If option is not provided, we keep the previous purchase_order_id.
         $updatePayload = [
+            'base_sku' => $validated['base_sku'] ?? $baseSku,
             'category_id' => $validated['category_id'],
             'name' => $validated['name'],
             'price' => $validated['price'],

@@ -491,11 +491,14 @@ class ProductRepository
             $adjType = !empty($data['adjustment_type']) ? $data['adjustment_type'] : null;
             $adjValue = (!empty($adjType) && isset($data['adjustment_value'])) ? (float)$data['adjustment_value'] : null;
 
+            $newBaseSku = !empty($data['base_sku']) ? $data['base_sku'] : $baseSku;
+
             DB::update("
                 UPDATE products 
-                SET category_id = ?, store_id = ?, purchase_order_id = ?, name = ?, description = ?, video_url = ?, price = ?, purchase_price = ?, adjustment_type = ?, adjustment_value = ?, updated_by = ?, updated_at = ? 
+                SET base_sku = ?, category_id = ?, store_id = ?, purchase_order_id = ?, name = ?, description = ?, video_url = ?, price = ?, purchase_price = ?, adjustment_type = ?, adjustment_value = ?, updated_by = ?, updated_at = ? 
                 WHERE base_sku = ?
             ", [
+                $newBaseSku,
                 $data['category_id'],
                 $storeId,
                 $data['purchase_order_id'] ?? null,
@@ -511,7 +514,7 @@ class ProductRepository
                 $baseSku
             ]);
 
-            $product = DB::select("SELECT id FROM products WHERE base_sku = ?", [$baseSku])[0];
+            $product = DB::select("SELECT id FROM products WHERE base_sku = ?", [$newBaseSku])[0];
 
             $updatedVariantIds = array_filter(array_column($data['variants'], 'id'));
             if (!empty($updatedVariantIds)) {
@@ -524,9 +527,19 @@ class ProductRepository
                 DB::delete("DELETE FROM product_variants WHERE product_id = ?", [$product->id]);
             }
 
-            foreach ($data['variants'] as $v) {
-                $sizeClean = strtoupper(preg_replace('/[^A-Z0-9]/', '', $v['size']));
-                $variantSku = $baseSku . '-' . $sizeClean;
+            $usedVariantSkus = [];
+            foreach ($data['variants'] as $index => $v) {
+                $rawSize = $v['size'] ?? '';
+                $sizeClean = strtoupper(preg_replace('/[^A-Z0-9]/', '', $rawSize));
+                if ($sizeClean === '') {
+                    $sizeClean = 'VAR' . ($index + 1);
+                }
+                $candidateSku = $newBaseSku . '-' . $sizeClean;
+                if (in_array($candidateSku, $usedVariantSkus)) {
+                    $candidateSku .= '-' . ($index + 1);
+                }
+                $variantSku = $candidateSku;
+                $usedVariantSkus[] = $variantSku;
 
                 if (!empty($v['id'])) {
                     DB::update("
@@ -575,7 +588,7 @@ class ProductRepository
             }
 
             DB::commit();
-            return $this->findBySku($baseSku);
+            return $this->findBySku($newBaseSku, null, true);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
