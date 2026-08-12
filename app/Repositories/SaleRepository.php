@@ -133,7 +133,7 @@ class SaleRepository
         return !empty($result) ? $result[0] : (object)['total_amount' => 0.00, 'total_commission' => 0.00, 'total_sales' => 0];
     }
 
-    public function persistSaleAndReduceStock(int $storeId, int $sellerId, ?int $customerId, ?string $customerName, float $total, array $processedItems, float $commissionPercentage = 0.00, float $commissionAmount = 0.00, ?int $paymentMethodId = null, ?string $paymentMethodName = null): int
+    public function persistSaleAndReduceStock(int $storeId, int $sellerId, ?int $customerId, ?string $customerName, float $total, array $processedItems, float $commissionPercentage = 0.00, float $commissionAmount = 0.00, ?int $paymentMethodId = null, ?string $paymentMethodName = null, array $processedPayments = []): int
     {
         $now = now();
         DB::insert("
@@ -142,6 +142,20 @@ class SaleRepository
         ", [$storeId, $sellerId, $customerId, $customerName, $paymentMethodId, $paymentMethodName, $total, $commissionPercentage, $commissionAmount, $now, $now]);
         
         $saleId = (int) DB::getPdo()->lastInsertId();
+
+        foreach ($processedPayments as $pPay) {
+            DB::insert("
+                INSERT INTO sale_payments (sale_id, payment_method_id, payment_method_name, amount, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ", [
+                $saleId,
+                $pPay['payment_method_id'] ?? null,
+                $pPay['payment_method_name'] ?? null,
+                $pPay['amount'],
+                $now,
+                $now
+            ]);
+        }
 
         foreach ($processedItems as $pItem) {
             DB::insert("
