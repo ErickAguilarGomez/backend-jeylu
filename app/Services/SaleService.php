@@ -253,4 +253,128 @@ class SaleService
             throw $e;
         }
     }
+
+    public function processCheckoutSale(array $data)
+    {
+        DB::beginTransaction();
+
+        try {
+            $items = $data['items'] ?? [];
+            if (empty($items)) {
+                throw new Exception("El carrito de compras está vacío.");
+            }
+
+            $customerName = trim($data['customer_name'] ?? '');
+            $customerPhone = trim($data['customer_phone'] ?? '');
+            $customerEmail = trim($data['customer_email'] ?? '');
+            $deliveryType = $data['delivery_type'] ?? 'pickup';
+            $deliveryAddress = $data['delivery_address'] ?? null;
+            $orderNotes = $data['order_notes'] ?? null;
+            $storeId = !empty($data['store_id']) ? (int) $data['store_id'] : 1;
+            
+            // Asignar al usuario administrador/sistema para ventas de la tienda virtual
+            $sellerId = 1;
+
+            $paymentMethodName = 'Tarjeta de Crédito / Débito';
+            $paymentMethodId = null;
+            $pm = DB::select("SELECT id, name FROM payment_methods WHERE (name LIKE '%Tarjeta%' OR name LIKE '%Credito%' OR name LIKE '%Crédito%') AND is_active = 1 LIMIT 1");
+            if (!empty($pm)) {
+                $paymentMethodId = $pm[0]->id;
+                $paymentMethodName = $pm[0]->name;
+            }
+
+            $total = 0.00;
+            $processedItems = [];
+
+            foreach ($items as $item) {
+                $variantSku = $item['sku'];
+                $quantity = (int) $item['quantity'];
+
+                $variant = DB::select("
+                    SELECT pv.id as variant_id, p.name, p.price 
+                    FROM product_variants pv
+                    INNER JOIN products p ON pv.product_id = p.id
+                    WHERE pv.sku = ?
+                ", [$variantSku]);
+
+                if (empty($variant)) {
+                    if (!empty($item['productId'])) {
+                        $variant = DB::select("
+                            SELECT pv.id as variant_id, p.name, p.price 
+                            FROM product_variants pv
+                            INNER JOIN products p ON pv.product_id = p.id
+                            WHERE p.id = ? " . (!empty($item['size']) ? "AND pv.size = ?" : "") . "
+                            LIMIT 1
+                        ", !empty($item['size']) ? [$item['productId'], $item['size']] : [$item['productId']]);
+                    }
+                }
+
+                if (empty($variant)) {
+                    throw new Exception("Producto o variante no encontrada (SKU: {$variantSku}).");
+                }
+                $variant = $variant[0];
+
+                // Verificar stock en inventario de tienda
+                $lockSql = DB::connection()->getDriverName() === 'sqlite' ? "" : " FOR UPDATE";
+                $storeStock = DB::select("SELECT * FROM store_inventories WHERE store_id = ? AND variant_id = ?" . $lockSql, [$storeId, $variant->variant_id]);
+
+                if (empty($storeStock) || $storeStock[0]->stock < $quantity) {
+                    // Buscar tienda con stock suficiente si la tienda seleccionada no tiene
+                    $altStock = DB::select("SELECT store_id, stock FROM store_inventories WHERE variant_id = ? AND stock >= ? ORDER BY stock DESC LIMIT 1" . $lockSql, [$variant->variant_id, $quantity]);
+                    if (!empty($altStock)) {
+                        $storeId = $altStock[0]->store_id;
+                    } else {
+                        throw new Exception("Stock insuficiente para {$variant->name} (Talle: " . ($item['size'] ?? 'Único') . ").");
+                    }
+                }
+
+                $price = (float) $variant->price;
+                $subtotal = $price * $quantity;
+                $total += $subtotal;
+
+                $processedItems[] = [
+                    'variant_id' => $variant->variant_id,
+                    'quantity' => $quantity,
+                    'price' => $price,
+                    'subtotal' => $subtotal
+                ];
+            }
+
+            $saleId = $this->saleRepo->persistSaleAndReduceStock(
+                $storeId,
+                $sellerId,
+                null,
+                $customerName,
+                $total,
+                $processedItems,
+                0.00,
+                0.00,
+                $paymentMethodId,
+                $paymentMethodName,
+                [],
+                $customerPhone,
+                $customerEmail,
+                $deliveryType,
+                $deliveryAddress,
+                $orderNotes,
+                'PENDING'
+            );
+
+            DB::commit();
+
+            return [
+                'success' => true,
+                'sale_id' => $saleId,
+                'total' => $total,
+                'dispatch_status' => 'PENDING',
+                'delivery_type' => $deliveryType,
+                'customer_name' => $customerName,
+                'customer_phone' => $customerPhone,
+                'message' => '¡Compra realizada con éxito! Tu pedido ha sido registrado para despacho.'
+            ];
+        } catch (Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
 }

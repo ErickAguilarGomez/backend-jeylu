@@ -133,13 +133,39 @@ class SaleRepository
         return !empty($result) ? $result[0] : (object)['total_amount' => 0.00, 'total_commission' => 0.00, 'total_sales' => 0];
     }
 
-    public function persistSaleAndReduceStock(int $storeId, int $sellerId, ?int $customerId, ?string $customerName, float $total, array $processedItems, float $commissionPercentage = 0.00, float $commissionAmount = 0.00, ?int $paymentMethodId = null, ?string $paymentMethodName = null, array $processedPayments = []): int
+    public function persistSaleAndReduceStock(
+        int $storeId, 
+        int $sellerId, 
+        ?int $customerId, 
+        ?string $customerName, 
+        float $total, 
+        array $processedItems, 
+        float $commissionPercentage = 0.00, 
+        float $commissionAmount = 0.00, 
+        ?int $paymentMethodId = null, 
+        ?string $paymentMethodName = null, 
+        array $processedPayments = [],
+        ?string $customerPhone = null,
+        ?string $customerEmail = null,
+        string $deliveryType = 'pickup',
+        ?string $deliveryAddress = null,
+        ?string $orderNotes = null,
+        string $dispatchStatus = 'PENDING'
+    ): int
     {
         $now = now();
         DB::insert("
-            INSERT INTO sales (store_id, seller_id, customer_id, customer_name, payment_method_id, payment_method_name, total, commission_percentage, commission_amount, status, created_at, updated_at) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
-        ", [$storeId, $sellerId, $customerId, $customerName, $paymentMethodId, $paymentMethodName, $total, $commissionPercentage, $commissionAmount, $now, $now]);
+            INSERT INTO sales (
+                store_id, seller_id, customer_id, customer_name, 
+                customer_phone, customer_email, delivery_type, delivery_address, order_notes, dispatch_status,
+                payment_method_id, payment_method_name, total, commission_percentage, commission_amount, status, created_at, updated_at
+            ) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
+        ", [
+            $storeId, $sellerId, $customerId, $customerName, 
+            $customerPhone, $customerEmail, $deliveryType, $deliveryAddress, $orderNotes, $dispatchStatus,
+            $paymentMethodId, $paymentMethodName, $total, $commissionPercentage, $commissionAmount, $now, $now
+        ]);
         
         $saleId = (int) DB::getPdo()->lastInsertId();
 

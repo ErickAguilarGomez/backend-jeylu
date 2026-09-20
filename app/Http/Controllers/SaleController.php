@@ -283,4 +283,45 @@ class SaleController extends Controller
             ], 422);
         }
     }
+
+    /**
+     * Procesar compra online / checkout con tarjeta de crédito y datos de despacho.
+     */
+    public function publicCheckout(Request $request)
+    {
+        $validated = $request->validate([
+            'items' => ['required', 'array', 'min:1'],
+            'customer_name' => ['required', 'string', 'max:255'],
+            'customer_phone' => ['required', 'string', 'max:100'],
+            'customer_email' => ['nullable', 'email', 'max:191'],
+            'delivery_type' => ['required', 'string', 'in:pickup,delivery'],
+            'delivery_address' => ['nullable', 'string'],
+            'store_id' => ['nullable', 'integer'],
+            'order_notes' => ['nullable', 'string', 'max:1000'],
+            'card_name' => ['nullable', 'string', 'max:255'],
+            'card_number' => ['nullable', 'string', 'max:30'],
+        ], [
+            'items.required' => 'El carrito está vacío.',
+            'customer_name.required' => 'El nombre completo es obligatorio.',
+            'customer_phone.required' => 'El teléfono o WhatsApp de contacto es obligatorio.',
+            'delivery_type.required' => 'Debe seleccionar una modalidad de entrega.'
+        ]);
+
+        if ($validated['delivery_type'] === 'delivery' && empty(trim($validated['delivery_address'] ?? ''))) {
+            return response()->json([
+                'success' => false,
+                'message' => 'La dirección de entrega es obligatoria para envíos a domicilio.'
+            ], 422);
+        }
+
+        try {
+            $result = $this->saleService->processCheckoutSale($validated);
+            return response()->json($result, 201);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 422);
+        }
+    }
 }
