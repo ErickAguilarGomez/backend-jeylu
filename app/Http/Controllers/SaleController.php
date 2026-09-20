@@ -106,65 +106,68 @@ class SaleController extends Controller
         }
 
         $startDate = $request->query('start_date');
-        $endDate = $request->query('end_date');
-        $sellerId = $request->query('seller_id') ? (int) $request->query('seller_id') : null;
-        $status = $request->query('status');
+        $endDate   = $request->query('end_date');
+        $sellerId  = $request->query('seller_id') ? (int) $request->query('seller_id') : null;
+        $status    = $request->query('status');
+
+        // Construir filtros de la subconsulta de ventas
+        $saleConditions = [];
+        $saleParams     = [];
+
+        if ($status) {
+            $saleConditions[] = "s.status = ?";
+            $saleParams[]     = $status;
+        } else {
+            $saleConditions[] = "s.status IN ('COMPLETED', 'EXCHANGED')";
+        }
+        if ($startDate) {
+            $saleConditions[] = "s.created_at >= ?";
+            $saleParams[]     = $startDate . ' 00:00:00';
+        }
+        if ($endDate) {
+            $saleConditions[] = "s.created_at <= ?";
+            $saleParams[]     = $endDate . ' 23:59:59';
+        }
+
+        // El LEFT JOIN incluye los filtros de ventas en la cláusula ON
+        // para mantener todos los vendedores aunque no tengan ventas en el rango
+        $onClause = "u.id = s.seller_id";
+        if (!empty($saleConditions)) {
+            $onClause .= ' AND ' . implode(' AND ', $saleConditions);
+        }
 
         $sql = "
             SELECT 
-                u.id as seller_id,
+                u.id   as seller_id,
                 u.name as seller_name,
-                COUNT(s.id) as total_sales,
-                COALESCE(SUM(s.total), 0) as total_sold,
+                COUNT(s.id)                          as total_sales,
+                COALESCE(SUM(s.total), 0)            as total_sold,
                 COALESCE(SUM(s.commission_amount), 0) as total_commission
             FROM users u
-            LEFT JOIN sales s ON u.id = s.seller_id
+            LEFT JOIN sales s ON {$onClause}
+            WHERE u.role_id = 2
         ";
 
-        $joinConditions = [];
-        $joinParams = [];
-
-        if ($startDate) {
-            $joinConditions[] = "s.created_at >= ?";
-            $joinParams[] = $startDate . ' 00:00:00';
-        }
-        if ($endDate) {
-            $joinConditions[] = "s.created_at <= ?";
-            $joinParams[] = $endDate . ' 23:59:59';
-        }
-        if ($status) {
-            $joinConditions[] = "s.status = ?";
-            $joinParams[] = $status;
-        } else {
-            $joinConditions[] = "s.status IN ('COMPLETED', 'EXCHANGED')";
-        }
-
-        if (!empty($joinConditions)) {
-            $sql .= " AND " . implode(" AND ", $joinConditions);
-        }
-
-        $sql .= " WHERE u.role_id = 2";
         $whereParams = [];
         if ($sellerId) {
-            $sql .= " AND u.id = ?";
+            $sql          .= ' AND u.id = ?';
             $whereParams[] = $sellerId;
         }
 
-        $sql .= " GROUP BY u.id, u.name ORDER BY total_commission DESC";
+        $sql .= ' GROUP BY u.id, u.name ORDER BY total_commission DESC';
 
-        $params = array_merge($joinParams, $whereParams);
-        $data = \Illuminate\Support\Facades\DB::select($sql, $params);
+        $params = array_merge($saleParams, $whereParams);
+        $data   = \Illuminate\Support\Facades\DB::select($sql, $params);
 
-        // Convert values to correct numeric types
         foreach ($data as $item) {
-            $item->total_sales = (int) $item->total_sales;
-            $item->total_sold = (float) $item->total_sold;
+            $item->total_sales      = (int)   $item->total_sales;
+            $item->total_sold       = (float) $item->total_sold;
             $item->total_commission = (float) $item->total_commission;
         }
 
         return response()->json([
             'success' => true,
-            'data' => $data
+            'data'    => $data
         ]);
     }
 

@@ -17,7 +17,9 @@ class AuthController extends Controller
         ]);
 
         if (Auth::attempt($credentials, $request->boolean('remember'))) {
-            $request->session()->regenerate();
+            if ($request->hasSession()) {
+                $request->session()->regenerate();
+            }
 
             $user = Auth::user();
 
@@ -25,7 +27,7 @@ class AuthController extends Controller
 
             $primaryStore = null;
             $storeUser = DB::select("
-                SELECT s.id, s.name, s.address 
+                SELECT s.id, s.name, s.address, s.phone
                 FROM store_user su
                 INNER JOIN stores s ON su.store_id = s.id
                 WHERE su.user_id = ? AND su.is_primary = 1
@@ -33,9 +35,10 @@ class AuthController extends Controller
             ", [$user->id]);
             if (!empty($storeUser)) {
                 $primaryStore = [
-                    'id' => $storeUser[0]->id,
-                    'name' => $storeUser[0]->name,
-                    'address' => $storeUser[0]->address
+                    'id'      => $storeUser[0]->id,
+                    'name'    => $storeUser[0]->name,
+                    'address' => $storeUser[0]->address,
+                    'phone'   => $storeUser[0]->phone ?? null
                 ];
             }
 
@@ -50,7 +53,7 @@ class AuthController extends Controller
                     'is_helper' => (bool) $user->is_helper,
                     'primary_store' => $primaryStore
                 ],
-                'token' => csrf_token(),
+                'token' => $request->hasSession() ? csrf_token() : null,
                 'message' => 'Sesión iniciada con éxito.'
             ]);
         }
@@ -85,7 +88,7 @@ class AuthController extends Controller
 
         $primaryStore = null;
         $storeUser = DB::select("
-            SELECT s.id, s.name, s.address 
+            SELECT s.id, s.name, s.address, s.phone
             FROM store_user su
             INNER JOIN stores s ON su.store_id = s.id
             WHERE su.user_id = ? AND su.is_primary = 1
@@ -93,9 +96,10 @@ class AuthController extends Controller
         ", [$user->id]);
         if (!empty($storeUser)) {
             $primaryStore = [
-                'id' => $storeUser[0]->id,
-                'name' => $storeUser[0]->name,
-                'address' => $storeUser[0]->address
+                'id'      => $storeUser[0]->id,
+                'name'    => $storeUser[0]->name,
+                'address' => $storeUser[0]->address,
+                'phone'   => $storeUser[0]->phone ?? null
             ];
         }
 
