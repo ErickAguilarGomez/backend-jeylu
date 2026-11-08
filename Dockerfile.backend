@@ -1,0 +1,48 @@
+FROM dunglas/frankenphp:php8.4-alpine AS builder
+
+WORKDIR /app
+
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+RUN install-php-extensions \
+    pdo_mysql \
+    gd \
+    bcmath \
+    zip \
+    intl \
+    opcache \
+    exif \
+    pcntl
+
+COPY composer.json composer.lock ./
+
+RUN composer install --no-dev --prefer-dist --optimize-autoloader --no-scripts --no-progress
+
+COPY . .
+
+FROM dunglas/frankenphp:php8.4-alpine AS runner
+
+WORKDIR /app
+
+RUN install-php-extensions \
+    pdo_mysql \
+    gd \
+    bcmath \
+    zip \
+    intl \
+    opcache \
+    exif \
+    pcntl
+
+COPY --from=builder --chown=www-data:www-data /app /app
+
+RUN mkdir -p /app/storage/framework/cache /app/storage/framework/sessions /app/storage/framework/views /app/storage/logs /app/bootstrap/cache \
+    && mkdir -p /data/caddy /config/caddy \
+    && chown -R www-data:www-data /app/storage /app/bootstrap/cache /data/caddy /config/caddy \
+    && chmod -R 775 /app/storage /app/bootstrap/cache
+
+USER www-data
+
+EXPOSE 8000
+
+CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]
