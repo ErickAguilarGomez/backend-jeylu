@@ -34,6 +34,11 @@ RUN install-php-extensions \
     exif \
     pcntl
 
+RUN printf '%s\n' \
+    'upload_max_filesize=10M' \
+    'post_max_size=64M' \
+    > /usr/local/etc/php/conf.d/99-uploads.ini
+
 COPY --from=builder --chown=www-data:www-data /app /app
 
 RUN mkdir -p /app/storage/framework/cache /app/storage/framework/sessions /app/storage/framework/views /app/storage/logs /app/bootstrap/cache \
