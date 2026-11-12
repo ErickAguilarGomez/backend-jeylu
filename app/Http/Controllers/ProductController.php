@@ -279,7 +279,7 @@ class ProductController extends Controller
             $size = $v['size'] ?? null;
             $color = $v['color'] ?? null;
             
-            $sizeClean = $size !== null && $size !== '' ? strtoupper(preg_replace('/[^A-Z0-9]/', '', $size)) : 'U';
+            $sizeClean = $size !== null && $size !== '' ? preg_replace('/[^A-Z0-9]/', '', strtoupper($size)) : 'U';
             $variantSku = $validated['base_sku'] . '-' . $sizeClean;
 
             $processedVariants[] = [
@@ -405,7 +405,7 @@ class ProductController extends Controller
             $size = $v['size'] ?? null;
             $color = $v['color'] ?? null;
             
-            $sizeClean = $size !== null && $size !== '' ? strtoupper(preg_replace('/[^A-Z0-9]/', '', $size)) : 'U';
+            $sizeClean = $size !== null && $size !== '' ? preg_replace('/[^A-Z0-9]/', '', strtoupper($size)) : 'U';
             $targetBaseSku = !empty($validated['base_sku']) ? $validated['base_sku'] : $baseSku;
             $variantSku = $targetBaseSku . '-' . $sizeClean;
 

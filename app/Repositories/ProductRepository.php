@@ -441,9 +441,20 @@ class ProductRepository
                 }
             }
 
-            foreach ($data['variants'] as $v) {
-                $sizeClean = strtoupper(preg_replace('/[^A-Z0-9]/', '', $v['size']));
+            $usedVariantSkus = [];
+            foreach ($data['variants'] as $index => $v) {
+                $rawSize = $v['size'] ?? '';
+                $sizeClean = $rawSize !== ''
+                    ? preg_replace('/[^A-Z0-9]/', '', strtoupper($rawSize))
+                    : 'U';
+                if ($sizeClean === '') {
+                    $sizeClean = 'U';
+                }
                 $variantSku = $data['base_sku'] . '-' . $sizeClean;
+                if (in_array($variantSku, $usedVariantSkus, true)) {
+                    $variantSku .= '-' . ($index + 1);
+                }
+                $usedVariantSkus[] = $variantSku;
 
                 DB::insert("
                     INSERT INTO product_variants (product_id, sku, size, color, created_at, updated_at) 
@@ -530,7 +541,7 @@ class ProductRepository
             $usedVariantSkus = [];
             foreach ($data['variants'] as $index => $v) {
                 $rawSize = $v['size'] ?? '';
-                $sizeClean = strtoupper(preg_replace('/[^A-Z0-9]/', '', $rawSize));
+                $sizeClean = preg_replace('/[^A-Z0-9]/', '', strtoupper($rawSize));
                 if ($sizeClean === '') {
                     $sizeClean = 'VAR' . ($index + 1);
                 }
