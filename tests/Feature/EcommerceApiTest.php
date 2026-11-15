@@ -7,6 +7,8 @@ use Tests\TestCase;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\UploadedFile;
 
 class EcommerceApiTest extends TestCase
 {
@@ -19,6 +21,10 @@ class EcommerceApiTest extends TestCase
             'Referer' => 'http://localhost',
             'Accept' => 'application/json',
         ]);
+        DB::insert(
+            'INSERT INTO payment_methods (id, name, is_active, created_at, updated_at) VALUES (1, ?, 1, ?, ?)',
+            ['Efectivo de prueba', now(), now()]
+        );
     }
 
     public function test_auth_login_validation_and_success()
@@ -189,6 +195,607 @@ class EcommerceApiTest extends TestCase
                  ->assertJsonValidationErrors(['category_id']);
     }
 
+    public function test_product_create_accepts_multiple_images_and_variants()
+    {
+        $this->actingAs(User::find(1));
+        Storage::fake('public');
+        DB::update('UPDATE cloudinary_configs SET is_active = 0');
+
+        $response = $this->post('/api/products', [
+            'base_sku' => 'MOBILE-CREATE-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto creado desde móvil',
+            'price' => 89.90,
+            'purchase_price' => 40.00,
+            'variants' => [
+                ['size' => 'S', 'color' => 'Negro', 'stocks' => [1 => 4]],
+                ['size' => 'M', 'color' => 'Azul', 'stocks' => [1 => 6]],
+            ],
+            'images' => array_merge(
+                array_map(
+                    static fn (int $index) => UploadedFile::fake()->image("producto-{$index}.jpg", 64, 64),
+                    range(1, 19)
+                ),
+                [UploadedFile::fake()->image('producto-webp.webp', 64, 64)]
+            ),
+        ], ['Accept' => 'application/json']);
+
+        $response->assertCreated()->assertJsonPath('success', true);
+
+        $product = DB::select(
+            'SELECT id FROM products WHERE base_sku = ? LIMIT 1',
+            ['MOBILE-CREATE-TEST']
+        )[0];
+
+        $this->assertSame(20, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM product_images WHERE product_id = ?',
+            [$product->id]
+        )[0]->total);
+        $this->assertSame(1, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM product_images WHERE product_id = ? AND is_primary = 1',
+            [$product->id]
+        )[0]->total);
+        $this->assertSame(2, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM product_variants WHERE product_id = ?',
+            [$product->id]
+        )[0]->total);
+        $this->assertSame(2, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM store_inventories si
+             INNER JOIN product_variants pv ON pv.id = si.variant_id
+             WHERE pv.product_id = ?',
+            [$product->id]
+        )[0]->total);
+        $this->assertCount(20, Storage::disk('public')->allFiles('ecommerce_products'));
+
+        $publicImageUrlPrefix = Storage::disk('public')->url('ecommerce_products') . '/';
+        foreach (DB::select('SELECT image_url FROM product_images WHERE product_id = ?', [$product->id]) as $image) {
+            $this->assertStringStartsWith($publicImageUrlPrefix, $image->image_url);
+        }
+    }
+
+    public function test_product_update_accepts_multiple_images_and_swaps_variant_skus()
+    {
+        $admin = User::find(1);
+        $this->actingAs($admin);
+        Storage::fake('public');
+        DB::update('UPDATE cloudinary_configs SET is_active = 0');
+
+        $productRepo = app(\App\Repositories\ProductRepository::class);
+        $productRepo->create([
+            'base_sku' => 'MOBILE-UPDATE-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto para edición móvil',
+            'price' => 100.00,
+            'purchase_price' => 50.00,
+            'variants' => [
+                ['size' => 'S', 'color' => 'Negro', 'stocks' => [1 => 2]],
+                ['size' => 'M', 'color' => 'Azul', 'stocks' => [1 => 3]],
+            ],
+        ], 1);
+
+        $product = DB::select("SELECT id FROM products WHERE base_sku = 'MOBILE-UPDATE-TEST' LIMIT 1")[0];
+        $variants = DB::select(
+            'SELECT id, size FROM product_variants WHERE product_id = ? ORDER BY size',
+            [$product->id]
+        );
+        $variantIds = [];
+        foreach ($variants as $variant) {
+            $variantIds[$variant->size] = (int) $variant->id;
+        }
+
+        $response = $this->post('/api/products/MOBILE-UPDATE-TEST', [
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto actualizado desde móvil',
+            'price' => 120.00,
+            'purchase_price' => 55.00,
+            'variants' => [
+                ['id' => $variantIds['M'], 'size' => 'S', 'color' => 'Verde', 'stocks' => [1 => 5]],
+                ['id' => $variantIds['S'], 'size' => 'M', 'color' => 'Rojo', 'stocks' => [1 => 7]],
+            ],
+            'images' => array_map(
+                static fn (int $index) => UploadedFile::fake()->image("edicion-{$index}.jpg", 64, 64),
+                range(1, 20)
+            ),
+        ], ['Accept' => 'application/json']);
+
+        $response->assertOk()->assertJsonPath('success', true);
+
+        $updatedVariants = DB::select(
+            'SELECT id, sku, size, color FROM product_variants WHERE product_id = ? ORDER BY size',
+            [$product->id]
+        );
+        $this->assertCount(2, $updatedVariants);
+        $updatedBySize = [];
+        foreach ($updatedVariants as $variant) {
+            $updatedBySize[$variant->size] = $variant;
+        }
+        $this->assertSame('MOBILE-UPDATE-TEST-S', $updatedBySize['S']->sku);
+        $this->assertSame('MOBILE-UPDATE-TEST-M', $updatedBySize['M']->sku);
+        $this->assertSame('Verde', $updatedBySize['S']->color);
+        $this->assertSame('Rojo', $updatedBySize['M']->color);
+
+        $this->assertSame(20, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM product_images WHERE product_id = ?',
+            [$product->id]
+        )[0]->total);
+        $this->assertSame(1, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM product_images WHERE product_id = ? AND is_primary = 1',
+            [$product->id]
+        )[0]->total);
+        $this->assertSame(5, (int) DB::select(
+            'SELECT stock FROM store_inventories WHERE store_id = 1 AND variant_id = ?',
+            [$variantIds['M']]
+        )[0]->stock);
+    }
+
+    public function test_failed_product_create_rolls_back_new_purchase_order_and_cleans_its_file()
+    {
+        $this->actingAs(User::find(1));
+        $purchaseOrderFileUrl = 'https://res.cloudinary.com/example/image/upload/purchase_orders/new-order.pdf';
+
+        $cloudinary = \Mockery::mock(\App\Services\CloudinaryService::class);
+        $cloudinary->shouldReceive('upload')->once()->andReturn($purchaseOrderFileUrl);
+        $cloudinary->shouldReceive('delete')->once()->with($purchaseOrderFileUrl)->andReturn(true);
+        $this->app->instance(\App\Services\CloudinaryService::class, $cloudinary);
+
+        $productRepo = \Mockery::mock(\App\Repositories\ProductRepository::class)->makePartial();
+        $productRepo->shouldReceive('findBySku')->once()->with('PO-ROLLBACK-CREATE-TEST')->andReturn(null);
+        $productRepo->shouldReceive('create')->once()->andThrow(new \Illuminate\Database\QueryException(
+            'mysql',
+            'insert into products',
+            [],
+            new \PDOException('Simulated product insert failure', 1)
+        ));
+        $this->app->instance(\App\Repositories\ProductRepository::class, $productRepo);
+
+        $response = $this->post('/api/products', [
+            'base_sku' => 'PO-ROLLBACK-CREATE-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto que no debe crearse',
+            'price' => 89.90,
+            'purchase_price' => 40.00,
+            'purchase_order_option' => 'new',
+            'purchase_order_file' => UploadedFile::fake()->create('orden.pdf', 10, 'application/pdf'),
+            'variants' => [[
+                'size' => 'S',
+                'color' => 'Negro',
+                'stocks' => [1 => 4],
+            ]],
+        ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(500);
+        $this->assertSame(0, (int) DB::select('SELECT COUNT(*) AS total FROM purchase_orders')[0]->total);
+        $this->assertSame(0, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM products WHERE base_sku = ?',
+            ['PO-ROLLBACK-CREATE-TEST']
+        )[0]->total);
+    }
+
+    public function test_failed_product_update_rolls_back_purchase_order_file_replacement()
+    {
+        $this->actingAs(User::find(1));
+        $productRepo = app(\App\Repositories\ProductRepository::class);
+        $productRepo->create([
+            'base_sku' => 'PO-ROLLBACK-UPDATE-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto antes de editar',
+            'price' => 89.90,
+            'purchase_price' => 40.00,
+            'variants' => [[
+                'size' => 'S',
+                'color' => 'Negro',
+                'stocks' => [1 => 4],
+            ]],
+        ], 1);
+
+        $product = DB::select(
+            'SELECT id FROM products WHERE base_sku = ?',
+            ['PO-ROLLBACK-UPDATE-TEST']
+        )[0];
+        $variant = DB::select(
+            'SELECT id FROM product_variants WHERE product_id = ?',
+            [$product->id]
+        )[0];
+        $oldFileUrl = 'https://res.cloudinary.com/example/image/upload/purchase_orders/old-order.pdf';
+        $newFileUrl = 'https://res.cloudinary.com/example/image/upload/purchase_orders/new-order.pdf';
+        DB::insert(
+            'INSERT INTO purchase_orders (order_number, file_url, created_at, updated_at) VALUES (?, ?, ?, ?)',
+            ['ORDER-OLD', $oldFileUrl, now(), now()]
+        );
+        $purchaseOrderId = (int) DB::getPdo()->lastInsertId();
+        DB::update('UPDATE products SET purchase_order_id = ? WHERE id = ?', [$purchaseOrderId, $product->id]);
+
+        $cloudinary = \Mockery::mock(\App\Services\CloudinaryService::class);
+        $cloudinary->shouldReceive('upload')->once()->andReturn($newFileUrl);
+        $cloudinary->shouldReceive('delete')->once()->with($newFileUrl)->andReturn(true);
+        $this->app->instance(\App\Services\CloudinaryService::class, $cloudinary);
+
+        $productRepoMock = \Mockery::mock($productRepo)->makePartial();
+        $productRepoMock->shouldReceive('update')->once()->andThrow(new \Illuminate\Database\QueryException(
+            'mysql',
+            'update products',
+            [],
+            new \PDOException('Simulated product update failure', 1)
+        ));
+        $this->app->instance(\App\Repositories\ProductRepository::class, $productRepoMock);
+
+        $response = $this->post('/api/products/PO-ROLLBACK-UPDATE-TEST', [
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto editado que no debe guardarse',
+            'price' => 99.90,
+            'purchase_price' => 45.00,
+            'purchase_order_option' => 'existing',
+            'purchase_order_id' => $purchaseOrderId,
+            'purchase_order_file' => UploadedFile::fake()->create('orden-nueva.pdf', 10, 'application/pdf'),
+            'variants' => [[
+                'id' => (int) $variant->id,
+                'size' => 'S',
+                'color' => 'Negro',
+                'stocks' => [1 => 4],
+            ]],
+        ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(500);
+        $this->assertSame($oldFileUrl, DB::select(
+            'SELECT file_url FROM purchase_orders WHERE id = ?',
+            [$purchaseOrderId]
+        )[0]->file_url);
+        $this->assertSame('Producto antes de editar', DB::select(
+            'SELECT name FROM products WHERE id = ?',
+            [$product->id]
+        )[0]->name);
+    }
+
+    public function test_product_update_removes_inventory_for_a_removed_variant()
+    {
+        $this->actingAs(User::find(1));
+        $productRepo = app(\App\Repositories\ProductRepository::class);
+        $productRepo->create([
+            'base_sku' => 'MOBILE-REMOVE-VARIANT-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto con variante por retirar',
+            'price' => 80.00,
+            'purchase_price' => 35.00,
+            'variants' => [
+                ['size' => 'S', 'color' => 'Negro', 'stocks' => [1 => 3]],
+                ['size' => 'M', 'color' => 'Azul', 'stocks' => [1 => 4]],
+            ],
+        ], 1);
+
+        $product = DB::select(
+            'SELECT id FROM products WHERE base_sku = ? LIMIT 1',
+            ['MOBILE-REMOVE-VARIANT-TEST']
+        )[0];
+        $variants = DB::select(
+            'SELECT id, size FROM product_variants WHERE product_id = ?',
+            [$product->id]
+        );
+        $variantIds = [];
+        foreach ($variants as $variant) {
+            $variantIds[$variant->size] = (int) $variant->id;
+        }
+
+        $response = $this->post('/api/products/MOBILE-REMOVE-VARIANT-TEST', [
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto actualizado sin la variante M',
+            'price' => 85.00,
+            'purchase_price' => 36.00,
+            'variants' => [[
+                'id' => $variantIds['S'],
+                'size' => 'S',
+                'color' => 'Negro',
+                'stocks' => [1 => 3],
+            ]],
+        ], ['Accept' => 'application/json']);
+
+        $response->assertOk()->assertJsonPath('success', true);
+        $this->assertSame(1, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM product_variants WHERE product_id = ?',
+            [$product->id]
+        )[0]->total);
+        $this->assertSame(0, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM store_inventories WHERE variant_id = ?',
+            [$variantIds['M']]
+        )[0]->total);
+    }
+
+    public function test_deleting_primary_local_image_promotes_the_next_image_without_cloudinary()
+    {
+        $this->actingAs(User::find(1));
+        Storage::fake('public');
+        DB::update('UPDATE cloudinary_configs SET is_active = 0');
+
+        $productRepo = app(\App\Repositories\ProductRepository::class);
+        $productRepo->create([
+            'base_sku' => 'LOCAL-IMAGE-DELETE-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto con imágenes locales',
+            'price' => 80.00,
+            'purchase_price' => 35.00,
+            'variants' => [[
+                'size' => 'U',
+                'color' => null,
+                'stocks' => [1 => 2],
+            ]],
+        ], 1);
+
+        $productId = (int) DB::select(
+            'SELECT id FROM products WHERE base_sku = ? LIMIT 1',
+            ['LOCAL-IMAGE-DELETE-TEST']
+        )[0]->id;
+        $primaryPath = 'ecommerce_products/primary.webp';
+        $nextPath = 'ecommerce_products/next.webp';
+        Storage::disk('public')->put($primaryPath, 'primary image');
+        Storage::disk('public')->put($nextPath, 'next image');
+        $primaryUrl = Storage::disk('public')->url($primaryPath);
+        $nextUrl = Storage::disk('public')->url($nextPath);
+
+        DB::insert(
+            'INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at)
+             VALUES (?, ?, 1, ?, ?), (?, ?, 0, ?, ?)',
+            [$productId, $primaryUrl, now(), now(), $productId, $nextUrl, now(), now()]
+        );
+
+        $response = $this->deleteJson('/api/products/images', ['image_url' => $primaryUrl]);
+
+        $response->assertOk()->assertJsonPath('success', true);
+        Storage::disk('public')->assertMissing($primaryPath);
+        Storage::disk('public')->assertExists($nextPath);
+        $remainingImages = DB::select(
+            'SELECT image_url, is_primary FROM product_images WHERE product_id = ?',
+            [$productId]
+        );
+        $this->assertCount(1, $remainingImages);
+        $this->assertSame($nextUrl, $remainingImages[0]->image_url);
+        $this->assertSame(1, (int) $remainingImages[0]->is_primary);
+    }
+
+    public function test_product_image_database_reference_is_removed_before_storage_cleanup()
+    {
+        $this->actingAs(User::find(1));
+        $productRepo = app(\App\Repositories\ProductRepository::class);
+        $productRepo->create([
+            'base_sku' => 'IMAGE-CLEANUP-ORDER-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto para verificar eliminación segura',
+            'price' => 80.00,
+            'purchase_price' => 35.00,
+            'variants' => [[
+                'size' => 'U',
+                'color' => null,
+                'stocks' => [1 => 2],
+            ]],
+        ], 1);
+
+        $productId = (int) DB::select(
+            'SELECT id FROM products WHERE base_sku = ? LIMIT 1',
+            ['IMAGE-CLEANUP-ORDER-TEST']
+        )[0]->id;
+        $imageUrl = 'https://res.cloudinary.com/example/image/upload/product-image.jpg';
+        DB::insert(
+            'INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at)
+             VALUES (?, ?, 1, ?, ?)',
+            [$productId, $imageUrl, now(), now()]
+        );
+
+        $this->mock(\App\Services\CloudinaryService::class, function ($mock) use ($imageUrl, $productId) {
+            $mock->shouldReceive('delete')
+                ->once()
+                ->with($imageUrl)
+                ->andReturnUsing(function () use ($imageUrl, $productId) {
+                    $this->assertSame([], DB::select(
+                        'SELECT id FROM product_images WHERE product_id = ? AND image_url = ?',
+                        [$productId, $imageUrl]
+                    ));
+
+                    return false;
+                });
+        });
+
+        $this->deleteJson('/api/products/images', ['image_url' => $imageUrl])
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('storage_cleanup_pending', true);
+    }
+
+    public function test_product_update_rejects_duplicate_or_foreign_variant_ids_without_changes()
+    {
+        $this->actingAs(User::find(1));
+        $productRepo = app(\App\Repositories\ProductRepository::class);
+
+        foreach ([
+            ['base_sku' => 'MOBILE-OWNER-TEST', 'size' => 'S'],
+            ['base_sku' => 'MOBILE-OTHER-TEST', 'size' => 'M'],
+        ] as $fixture) {
+            $productRepo->create([
+                'base_sku' => $fixture['base_sku'],
+                'category_id' => 1,
+                'store_id' => 1,
+                'name' => 'Producto ' . $fixture['base_sku'],
+                'price' => 80.00,
+                'purchase_price' => 35.00,
+                'variants' => [[
+                    'size' => $fixture['size'],
+                    'color' => 'Negro',
+                    'stocks' => [1 => 3],
+                ]],
+            ], 1);
+        }
+
+        $products = DB::select(
+            'SELECT p.id AS product_id, p.base_sku, pv.id AS variant_id
+             FROM products p
+             INNER JOIN product_variants pv ON pv.product_id = p.id
+             WHERE p.base_sku IN (?, ?)',
+            ['MOBILE-OWNER-TEST', 'MOBILE-OTHER-TEST']
+        );
+        $idsBySku = [];
+        foreach ($products as $row) {
+            $idsBySku[$row->base_sku] = (int) $row->variant_id;
+        }
+
+        $basePayload = [
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto sin cambios',
+            'price' => 90.00,
+            'purchase_price' => 40.00,
+        ];
+
+        $duplicateResponse = $this->post('/api/products/MOBILE-OWNER-TEST', $basePayload + [
+            'variants' => [
+                ['id' => $idsBySku['MOBILE-OWNER-TEST'], 'size' => 'S', 'color' => 'Negro', 'stocks' => [1 => 3]],
+                ['id' => $idsBySku['MOBILE-OWNER-TEST'], 'size' => 'M', 'color' => 'Azul', 'stocks' => [1 => 2]],
+            ],
+        ], ['Accept' => 'application/json']);
+        $duplicateResponse->assertUnprocessable()
+            ->assertJsonPath('message', 'La solicitud contiene variantes duplicadas.');
+
+        $foreignResponse = $this->post('/api/products/MOBILE-OWNER-TEST', $basePayload + [
+            'variants' => [[
+                'id' => $idsBySku['MOBILE-OTHER-TEST'],
+                'size' => 'S',
+                'color' => 'Rojo',
+                'stocks' => [1 => 1],
+            ]],
+        ], ['Accept' => 'application/json']);
+        $foreignResponse->assertUnprocessable()
+            ->assertJsonPath('message', 'Una o más variantes no pertenecen a este producto. Recarga el producto e inténtalo de nuevo.');
+
+        $this->assertSame(1, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM product_variants pv
+             INNER JOIN products p ON p.id = pv.product_id
+             WHERE p.base_sku = ?',
+            ['MOBILE-OWNER-TEST']
+        )[0]->total);
+        $this->assertSame('Producto MOBILE-OWNER-TEST', DB::select(
+            'SELECT name FROM products WHERE base_sku = ?',
+            ['MOBILE-OWNER-TEST']
+        )[0]->name);
+    }
+
+    public function test_product_create_and_update_reject_variant_skus_longer_than_the_database_column()
+    {
+        $this->actingAs(User::find(1));
+        $tooLongBaseSku = str_repeat('X', 100);
+        $payload = [
+            'base_sku' => $tooLongBaseSku,
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto con SKU largo',
+            'price' => 80.00,
+            'purchase_price' => 35.00,
+            'variants' => [[
+                'size' => 'S',
+                'color' => 'Negro',
+                'stocks' => [1 => 3],
+            ]],
+        ];
+
+        $createResponse = $this->post('/api/products', $payload, ['Accept' => 'application/json']);
+        $createResponse->assertUnprocessable()
+            ->assertJsonPath('message', 'La combinación del SKU base y la talla genera un SKU de variante demasiado largo. Reduce el SKU base o la talla.');
+        $this->assertSame(0, (int) DB::select(
+            'SELECT COUNT(*) AS total FROM products WHERE base_sku = ?',
+            [$tooLongBaseSku]
+        )[0]->total);
+
+        $productRepo = app(\App\Repositories\ProductRepository::class);
+        $productRepo->create([
+            'base_sku' => 'SKU-LENGTH-EDIT-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto para conservar',
+            'price' => 80.00,
+            'purchase_price' => 35.00,
+            'variants' => [[
+                'size' => 'S',
+                'color' => 'Negro',
+                'stocks' => [1 => 3],
+            ]],
+        ], 1);
+        $variant = DB::select(
+            'SELECT id, sku FROM product_variants WHERE sku = ? LIMIT 1',
+            ['SKU-LENGTH-EDIT-TEST-S']
+        )[0];
+
+        $updatePayload = $payload;
+        $updatePayload['variants'][0]['id'] = (int) $variant->id;
+        $updatePayload['name'] = 'Este cambio no debe aplicarse';
+        $updateResponse = $this->post(
+            '/api/products/SKU-LENGTH-EDIT-TEST',
+            $updatePayload,
+            ['Accept' => 'application/json']
+        );
+        $updateResponse->assertUnprocessable()
+            ->assertJsonPath('message', 'La combinación del SKU base y la talla genera un SKU de variante demasiado largo. Reduce el SKU base o la talla.');
+
+        $this->assertSame('Producto para conservar', DB::select(
+            'SELECT name FROM products WHERE base_sku = ?',
+            ['SKU-LENGTH-EDIT-TEST']
+        )[0]->name);
+        $this->assertSame($variant->sku, DB::select(
+            'SELECT sku FROM product_variants WHERE id = ?',
+            [$variant->id]
+        )[0]->sku);
+    }
+
+    public function test_product_update_cannot_remove_variant_with_sales()
+    {
+        $this->actingAs(User::find(1));
+        $productRepo = app(\App\Repositories\ProductRepository::class);
+        $productRepo->create([
+            'base_sku' => 'MOBILE-SOLD-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto con venta',
+            'price' => 80.00,
+            'purchase_price' => 35.00,
+            'variants' => [[
+                'size' => 'S',
+                'color' => 'Negro',
+                'stocks' => [1 => 3],
+            ]],
+        ], 1);
+
+        $saleResponse = $this->postJson('/api/sales', [
+            'items' => [['sku' => 'MOBILE-SOLD-TEST-S', 'quantity' => 1]],
+            'store_id' => 1,
+            'payment_method_id' => 1,
+        ]);
+        $saleResponse->assertCreated();
+
+        $response = $this->post('/api/products/MOBILE-SOLD-TEST', [
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto con venta actualizado',
+            'price' => 90.00,
+            'purchase_price' => 40.00,
+            'variants' => [[
+                'size' => 'M',
+                'color' => 'Azul',
+                'stocks' => [1 => 2],
+            ]],
+        ], ['Accept' => 'application/json']);
+
+        $response->assertUnprocessable()
+            ->assertJsonPath('message', 'No puedes eliminar variantes que ya tienen ventas registradas. Conserva esas variantes y pon su stock en 0.');
+        $this->assertSame('MOBILE-SOLD-TEST-S', DB::select(
+            'SELECT sku FROM product_variants WHERE sku = ?',
+            ['MOBILE-SOLD-TEST-S']
+        )[0]->sku);
+    }
+
     public function test_sales_pos_endpoints()
     {
         $admin = User::find(1);
@@ -215,7 +822,8 @@ class EcommerceApiTest extends TestCase
                 ['sku' => 'SHOE-SAMBA-42', 'quantity' => 2]
             ],
             'customer_id' => 10,
-            'store_id' => 1
+            'store_id' => 1,
+            'payment_method_id' => 1,
         ]);
         $response->assertStatus(201)
                  ->assertJsonPath('success', true);
@@ -252,7 +860,8 @@ class EcommerceApiTest extends TestCase
             'items' => [
                 ['sku' => 'SHOE-SAMBA-42', 'quantity' => 2]
             ],
-            'store_id' => 1
+            'store_id' => 1,
+            'payment_method_id' => 1,
         ]);
 
         // As Admin: stats should return 700 (350 * 2) and 1 sale
@@ -294,7 +903,8 @@ class EcommerceApiTest extends TestCase
             'items' => [
                 ['sku' => 'SHOE-SAMBA-42-BLANCO', 'quantity' => 1]
             ],
-            'store_id' => 1
+            'store_id' => 1,
+            'payment_method_id' => 1,
         ]);
         $response->assertStatus(201);
 
@@ -428,6 +1038,75 @@ class EcommerceApiTest extends TestCase
         $this->assertEquals(1, $count);
     }
 
+    public function test_banner_update_keeps_the_old_image_if_new_upload_fails()
+    {
+        $this->actingAs(User::find(1));
+        $oldImageUrl = 'https://res.cloudinary.com/example/image/upload/old-banner.jpg';
+        DB::insert(
+            'INSERT INTO banners (image_url, is_active, sort_order, created_at, updated_at)
+             VALUES (?, 1, 1, ?, ?)',
+            [$oldImageUrl, now(), now()]
+        );
+        $bannerId = (int) DB::getPdo()->lastInsertId();
+
+        $this->mock(\App\Services\CloudinaryService::class, function ($mock) {
+            $mock->shouldReceive('upload')
+                ->once()
+                ->andThrow(new \RuntimeException('simulated upload failure'));
+            $mock->shouldNotReceive('delete');
+        });
+
+        $this->post("/api/banners/{$bannerId}", [
+            'image' => UploadedFile::fake()->image('new-banner.jpg'),
+            'sort_order' => 1,
+        ], ['Accept' => 'application/json'])
+            ->assertStatus(500);
+
+        $this->assertSame($oldImageUrl, DB::select(
+            'SELECT image_url FROM banners WHERE id = ?',
+            [$bannerId]
+        )[0]->image_url);
+    }
+
+    public function test_banner_update_reports_pending_cleanup_after_saving_new_image()
+    {
+        $this->actingAs(User::find(1));
+        $oldImageUrl = 'https://res.cloudinary.com/example/image/upload/old-banner.jpg';
+        $newImageUrl = 'https://res.cloudinary.com/example/image/upload/new-banner.jpg';
+        DB::insert(
+            'INSERT INTO banners (image_url, is_active, sort_order, created_at, updated_at)
+             VALUES (?, 1, 1, ?, ?)',
+            [$oldImageUrl, now(), now()]
+        );
+        $bannerId = (int) DB::getPdo()->lastInsertId();
+
+        $this->mock(\App\Services\CloudinaryService::class, function ($mock) use ($bannerId, $oldImageUrl, $newImageUrl) {
+            $mock->shouldReceive('upload')
+                ->once()
+                ->andReturn($newImageUrl);
+            $mock->shouldReceive('delete')
+                ->once()
+                ->with($oldImageUrl)
+                ->andReturnUsing(function () use ($bannerId, $newImageUrl) {
+                    $this->assertSame($newImageUrl, DB::select(
+                        'SELECT image_url FROM banners WHERE id = ?',
+                        [$bannerId]
+                    )[0]->image_url);
+
+                    return false;
+                });
+        });
+
+        $this->post("/api/banners/{$bannerId}", [
+            'image' => UploadedFile::fake()->image('new-banner.jpg'),
+            'sort_order' => 1,
+        ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('banner.image_url', $newImageUrl)
+            ->assertJsonPath('storage_cleanup_pending', true);
+    }
+
     public function test_whatsapp_numbers_endpoints()
     {
         $admin = User::find(1);
@@ -441,6 +1120,7 @@ class EcommerceApiTest extends TestCase
         ]);
         $response->assertStatus(201)
                  ->assertJsonPath('success', true);
+        $createdNumberId = $response->json('data.id');
 
         // 2. Try registering duplicate number (should fail validation)
         $response = $this->actingAs($admin)->postJson('/api/settings/whatsapp-numbers', [
@@ -459,7 +1139,7 @@ class EcommerceApiTest extends TestCase
                  ->assertJsonStructure(['success', 'data' => [['id', 'alias', 'phone', 'is_active', 'display_order']]]);
 
         // 4. Update WhatsApp number
-        $id = DB::select("SELECT id FROM whatsapp_numbers LIMIT 1")[0]->id;
+        $id = $createdNumberId;
         $response = $this->actingAs($admin)->putJson("/api/settings/whatsapp-numbers/{$id}", [
             'alias' => 'Soporte Modificado',
             'phone' => '+51999888777',
@@ -469,6 +1149,27 @@ class EcommerceApiTest extends TestCase
         $response->assertStatus(200)
                  ->assertJsonPath('success', true)
                  ->assertJsonPath('data.is_active', false);
+    }
+
+    public function test_payment_method_changes_require_admin_role()
+    {
+        $seller = User::findOrFail(2);
+
+        $this->actingAs($seller, 'sanctum')->postJson('/api/payment-methods', [
+            'name' => 'Pago no autorizado',
+        ])->assertForbidden();
+
+        $this->actingAs($seller, 'sanctum')->putJson('/api/payment-methods/1', [
+            'name' => 'Efectivo alterado',
+        ])->assertForbidden();
+
+        $this->actingAs($seller, 'sanctum')->postJson('/api/payment-methods/1/toggle')
+            ->assertForbidden();
+
+        $admin = User::findOrFail(1);
+        $this->actingAs($admin, 'sanctum')->postJson('/api/payment-methods', [])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['name']);
     }
 
     public function test_seller_commission_configuration()
@@ -523,7 +1224,8 @@ class EcommerceApiTest extends TestCase
         $response = $this->postJson('/api/sales', [
             'items' => [
                 ['sku' => $variant->sku, 'quantity' => 1]
-            ]
+            ],
+            'payment_method_id' => 1,
         ]);
         $response->assertStatus(201);
 
@@ -602,7 +1304,8 @@ class EcommerceApiTest extends TestCase
                 ['sku' => $variant->sku, 'quantity' => 3]
             ],
             'customer_name' => 'Cliente Inicial',
-            'store_id' => 1
+            'store_id' => 1,
+            'payment_method_id' => 1,
         ]);
         $response->assertStatus(201);
         $saleId = $response->json('sale_id');
@@ -650,7 +1353,8 @@ class EcommerceApiTest extends TestCase
             'items' => [
                 ['sku' => $variant, 'quantity' => 1, 'price' => 100.00]
             ],
-            'store_id' => 1
+            'store_id' => 1,
+            'payment_method_id' => 1,
         ]);
         $response->assertStatus(201);
 
@@ -659,7 +1363,8 @@ class EcommerceApiTest extends TestCase
             'items' => [
                 ['sku' => $variant, 'quantity' => 1, 'price' => 200.00]
             ],
-            'store_id' => 1
+            'store_id' => 1,
+            'payment_method_id' => 1,
         ]);
         $response->assertStatus(201);
         $saleId = $response->json('sale_id');

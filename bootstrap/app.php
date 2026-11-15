@@ -33,12 +33,38 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Illuminate\Database\QueryException $e, \Illuminate\Http\Request $request) {
             if ($request->is('api/*')) {
-                if ($e->getCode() == 23000 || (int) $e->errorInfo[1] === 1062) {
+                $sqlState = $e->errorInfo[0] ?? (string) $e->getCode();
+                $driverCode = (int) ($e->errorInfo[1] ?? 0);
+                $constraint = null;
+
+                if (preg_match("/for key ['`]([^'`]+)['`]/i", $e->getMessage(), $matches)) {
+                    $constraint = $matches[1];
+                } elseif (preg_match("/CONSTRAINT ['`]([^'`]+)['`]/i", $e->getMessage(), $matches)) {
+                    $constraint = $matches[1];
+                }
+
+                \Illuminate\Support\Facades\Log::channel('stderr')->error('API database query failed', [
+                    'path' => $request->path(),
+                    'method' => $request->method(),
+                    'sql_state' => $sqlState,
+                    'driver_code' => $driverCode,
+                    'constraint' => $constraint,
+                ]);
+
+                if ($driverCode === 1062) {
                     return response()->json([
                         'success' => false,
                         'message' => 'Error de duplicidad: Ya existe un registro con información idéntica en el sistema.'
                     ], 422);
                 }
+
+                if ($sqlState === '23000') {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'La operación entra en conflicto con una restricción de datos.'
+                    ], 409);
+                }
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Hubo un inconveniente al procesar la información en la base de datos.'

@@ -487,7 +487,7 @@ class ProductRepository
 
             DB::commit();
             return $this->findBySku($data['base_sku']);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             DB::rollBack();
             throw $e;
         }
@@ -527,15 +527,75 @@ class ProductRepository
 
             $product = DB::select("SELECT id FROM products WHERE base_sku = ?", [$newBaseSku])[0];
 
-            $updatedVariantIds = array_filter(array_column($data['variants'], 'id'));
-            if (!empty($updatedVariantIds)) {
-                $placeholders = implode(',', array_fill(0, count($updatedVariantIds), '?'));
-                DB::delete("
-                    DELETE FROM product_variants 
-                    WHERE product_id = ? AND id NOT IN ($placeholders)
-                ", array_merge([$product->id], $updatedVariantIds));
-            } else {
-                DB::delete("DELETE FROM product_variants WHERE product_id = ?", [$product->id]);
+            $hasPrimaryImage = !empty(DB::select(
+                "SELECT id FROM product_images WHERE product_id = ? AND is_primary = 1 LIMIT 1",
+                [$product->id]
+            ));
+
+            foreach ($data['images'] ?? [] as $image) {
+                $imageUrl = is_array($image) ? ($image['url'] ?? null) : $image;
+                if (empty($imageUrl)) {
+                    continue;
+                }
+
+                DB::insert(
+                    "INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    [$product->id, $imageUrl, $hasPrimaryImage ? 0 : 1, $timestamp, $timestamp]
+                );
+                $hasPrimaryImage = true;
+            }
+
+            foreach ($data['image_urls'] ?? [] as $imageUrl) {
+                if (empty($imageUrl)) {
+                    continue;
+                }
+
+                $exists = DB::select(
+                    "SELECT id FROM product_images WHERE product_id = ? AND image_url = ? LIMIT 1",
+                    [$product->id, $imageUrl]
+                );
+                if (!empty($exists)) {
+                    continue;
+                }
+
+                DB::insert(
+                    "INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    [$product->id, $imageUrl, $hasPrimaryImage ? 0 : 1, $timestamp, $timestamp]
+                );
+                $hasPrimaryImage = true;
+            }
+
+            $updatedVariantIds = array_values(array_unique(array_filter(array_column($data['variants'], 'id'))));
+            $existingVariantRows = DB::select(
+                "SELECT id FROM product_variants WHERE product_id = ?",
+                [$product->id]
+            );
+            $existingVariantIds = array_map(static fn ($variant) => (int) $variant->id, $existingVariantRows);
+            $removedVariantIds = array_values(array_diff($existingVariantIds, $updatedVariantIds));
+
+            if (!empty($removedVariantIds)) {
+                $placeholders = implode(',', array_fill(0, count($removedVariantIds), '?'));
+
+                // Explicitly remove inventory rows instead of relying only on
+                // foreign-key cascades, which may be absent in imported schemas.
+                DB::delete(
+                    "DELETE FROM store_inventories WHERE variant_id IN ($placeholders)",
+                    $removedVariantIds
+                );
+                DB::delete(
+                    "DELETE FROM product_variants WHERE product_id = ? AND id IN ($placeholders)",
+                    array_merge([$product->id], $removedVariantIds)
+                );
+            }
+
+            // Move surviving rows out of the unique SKU namespace before assigning
+            // their final SKUs. This allows edits that swap two existing sizes.
+            $survivingVariants = DB::select("SELECT id FROM product_variants WHERE product_id = ?", [$product->id]);
+            foreach ($survivingVariants as $variant) {
+                DB::update(
+                    "UPDATE product_variants SET sku = ? WHERE id = ?",
+                    ['TMP-' . bin2hex(random_bytes(24)), $variant->id]
+                );
             }
 
             $usedVariantSkus = [];
@@ -600,7 +660,7 @@ class ProductRepository
 
             DB::commit();
             return $this->findBySku($newBaseSku, null, true);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             DB::rollBack();
             throw $e;
         }

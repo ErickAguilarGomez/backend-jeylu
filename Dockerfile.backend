@@ -36,13 +36,18 @@ RUN install-php-extensions \
 
 RUN printf '%s\n' \
     'upload_max_filesize=10M' \
-    'post_max_size=64M' \
+    'post_max_size=128M' \
+    'max_file_uploads=25' \
+    'max_input_vars=5000' \
+    'max_execution_time=300' \
+    'max_input_time=300' \
     > /usr/local/etc/php/conf.d/99-uploads.ini
 
 COPY --from=builder --chown=www-data:www-data /app /app
 
-RUN mkdir -p /app/storage/framework/cache /app/storage/framework/sessions /app/storage/framework/views /app/storage/logs /app/bootstrap/cache \
+RUN mkdir -p /app/storage/app/public /app/storage/framework/cache /app/storage/framework/sessions /app/storage/framework/views /app/storage/logs /app/bootstrap/cache \
     && mkdir -p /data/caddy /config/caddy \
+    && php artisan storage:link --force \
     && chown -R www-data:www-data /app/storage /app/bootstrap/cache /data/caddy /config/caddy \
     && chmod -R 775 /app/storage /app/bootstrap/cache
 
