@@ -202,11 +202,31 @@ class ProductController extends Controller
 
     public function show(Request $request, string $sku)
     {
+        $storeId = $this->getProductStoreId($request);
+        $product = $this->productRepo->findBySku($sku, $storeId);
+
+        return $this->showProductResponse($product);
+    }
+
+    public function showById(Request $request, int $id)
+    {
+        $product = $this->productRepo->findById($id, $this->getProductStoreId($request));
+
+        return $this->showProductResponse($product);
+    }
+
+    private function getProductStoreId(Request $request): ?int
+    {
         $storeId = $this->getStoreIdIfSeller();
         if (!$storeId && Auth::check() && Auth::user()->role_id == 1 && $request->has('store_id')) {
             $storeId = (int) $request->query('store_id');
         }
-        $product = $this->productRepo->findBySku($sku, $storeId);
+
+        return $storeId;
+    }
+
+    private function showProductResponse($product)
+    {
 
         if (!$product) {
             return response()->json([
@@ -641,6 +661,20 @@ class ProductController extends Controller
             'data' => $updated,
             'message' => 'Product updated.'
         ]);
+    }
+
+    public function updateById(Request $request, int $id)
+    {
+        $product = $this->productRepo->findById($id, null, true);
+
+        if (!$product) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Product not found.'
+            ], 404);
+        }
+
+        return $this->update($request, (string) $product->sku);
     }
 
     public function destroy(string $sku)

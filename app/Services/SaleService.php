@@ -319,6 +319,10 @@ class SaleService
                 $storeStock = DB::select("SELECT * FROM store_inventories WHERE store_id = ? AND variant_id = ?" . $lockSql, [$storeId, $variant->variant_id]);
 
                 if (empty($storeStock) || $storeStock[0]->stock < $quantity) {
+                    if ($deliveryType === 'pickup') {
+                        throw new Exception("Stock insuficiente en la sucursal seleccionada para {$variant->name} (Talle: " . ($item['size'] ?? 'Único') . ").");
+                    }
+
                     // Buscar tienda con stock suficiente si la tienda seleccionada no tiene
                     $altStock = DB::select("SELECT store_id, stock FROM store_inventories WHERE variant_id = ? AND stock >= ? ORDER BY stock DESC LIMIT 1" . $lockSql, [$variant->variant_id, $quantity]);
                     if (!empty($altStock)) {
