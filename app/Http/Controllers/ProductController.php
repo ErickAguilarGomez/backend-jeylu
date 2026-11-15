@@ -22,6 +22,50 @@ class ProductController extends Controller
         $this->cloudinaryService = $cloudinaryService;
     }
 
+    private function cleanupUploadedImages(array $imageUrls, string $assetType = 'product image'): void
+    {
+        foreach (array_unique($imageUrls) as $imageUrl) {
+            try {
+                if (!$this->cloudinaryService->delete($imageUrl)) {
+                    Log::warning("Failed to clean up a {$assetType} after a save operation.");
+                }
+            } catch (\Throwable $cleanupError) {
+                Log::warning("Failed to clean up a {$assetType} after a save operation.", [
+                    'error' => $cleanupError->getMessage(),
+                ]);
+            }
+        }
+    }
+
+    private function hasOversizedVariantSku(string $baseSku, array $variants, bool $updating = false): bool
+    {
+        $generatedSkus = [];
+
+        foreach ($variants as $index => $variant) {
+            $rawSize = (string) ($variant['size'] ?? '');
+            $sizeClean = preg_replace('/[^A-Z0-9]/', '', strtoupper($rawSize));
+
+            if ($sizeClean === '') {
+                $sizeClean = $updating ? 'VAR' . ($index + 1) : 'U';
+            }
+
+            $variantSku = $baseSku . '-' . $sizeClean;
+            if (in_array($variantSku, $generatedSkus, true)) {
+                $variantSku .= '-' . ($index + 1);
+            }
+            $generatedSkus[] = $variantSku;
+
+            $characters = preg_match_all('/./us', $variantSku, $matches);
+            $skuLength = $characters === false ? strlen($variantSku) : $characters;
+
+            if ($skuLength > 100) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function getStoreIdIfSeller()
     {
         $user = Auth::user();
@@ -185,12 +229,72 @@ class ProductController extends Controller
             'image_url' => ['required', 'string']
         ]);
 
-        $this->cloudinaryService->delete($validated['image_url']);
-        DB::delete("DELETE FROM product_images WHERE image_url = ?", [$validated['image_url']]);
+        $images = DB::select(
+            'SELECT id, product_id FROM product_images WHERE image_url = ?',
+            [$validated['image_url']]
+        );
+
+        if (empty($images)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'La imagen ya no existe en la galería del producto.'
+            ], 404);
+        }
+
+        $productIds = array_values(array_unique(array_map(
+            static fn ($image) => (int) $image->product_id,
+            $images
+        )));
+
+        DB::transaction(function () use ($validated, $productIds) {
+            DB::delete("DELETE FROM product_images WHERE image_url = ?", [$validated['image_url']]);
+
+            foreach ($productIds as $productId) {
+                $hasPrimary = DB::select(
+                    'SELECT id FROM product_images WHERE product_id = ? AND is_primary = 1 LIMIT 1',
+                    [$productId]
+                );
+
+                if (empty($hasPrimary)) {
+                    $nextImage = DB::select(
+                        'SELECT id FROM product_images WHERE product_id = ? ORDER BY id ASC LIMIT 1',
+                        [$productId]
+                    );
+
+                    if (!empty($nextImage)) {
+                        DB::update(
+                            'UPDATE product_images SET is_primary = 1, updated_at = ? WHERE id = ?',
+                            [now(), $nextImage[0]->id]
+                        );
+                    }
+                }
+            }
+        });
+
+        // Remove the database reference before deleting the remote/local asset.
+        // If the database operation fails, the image remains available to the
+        // product instead of leaving a gallery row that points to a missing file.
+        $storageCleanupPending = false;
+        $storageCleanupError = null;
+        try {
+            $storageCleanupPending = !$this->cloudinaryService->delete($validated['image_url']);
+        } catch (\Throwable $e) {
+            $storageCleanupPending = true;
+            $storageCleanupError = $e->getMessage();
+        }
+
+        if ($storageCleanupPending) {
+            Log::warning('Product image was removed from the gallery but storage cleanup is pending.', [
+                'error' => $storageCleanupError,
+            ]);
+        }
 
         return response()->json([
             'success' => true,
-            'message' => 'Imagen eliminada exitosamente del almacenamiento y base de datos.'
+            'message' => $storageCleanupPending
+                ? 'Imagen retirada de la galería; la limpieza del almacenamiento quedó pendiente.'
+                : 'Imagen eliminada exitosamente del almacenamiento y base de datos.',
+            'storage_cleanup_pending' => $storageCleanupPending,
         ]);
     }
 
@@ -251,16 +355,30 @@ class ProductController extends Controller
             }
         }
 
+        if ($this->hasOversizedVariantSku($validated['base_sku'], $validated['variants'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'La combinación del SKU base y la talla genera un SKU de variante demasiado largo. Reduce el SKU base o la talla.'
+            ], 422);
+        }
+
         $processedImages = [];
-        
-        if ($request->hasFile('images')) {
-            foreach ($request->file('images') as $index => $file) {
-                $url = $this->cloudinaryService->upload($file, 'ecommerce_products');
-                $processedImages[] = [
-                    'url' => $url,
-                    'is_primary' => count($processedImages) === 0
-                ];
+        $uploadedImageUrls = [];
+
+        try {
+            if ($request->hasFile('images')) {
+                foreach ($request->file('images') as $file) {
+                    $url = $this->cloudinaryService->upload($file, 'ecommerce_products');
+                    $uploadedImageUrls[] = $url;
+                    $processedImages[] = [
+                        'url' => $url,
+                        'is_primary' => count($processedImages) === 0
+                    ];
+                }
             }
+        } catch (\Throwable $e) {
+            $this->cleanupUploadedImages($uploadedImageUrls);
+            throw $e;
         }
 
         if (!empty($validated['image_urls'])) {
@@ -290,23 +408,34 @@ class ProductController extends Controller
             ];
         }
 
-        $purchaseOrderId = $this->resolvePurchaseOrderId($request, $validated);
-        $storeId = (int) $validated['store_id'];
+        $purchaseOrderStorageChanges = ['uploaded' => [], 'replaced' => []];
+        try {
+            $created = DB::transaction(function () use ($request, $validated, $processedImages, $processedVariants, &$purchaseOrderStorageChanges) {
+                $purchaseOrderId = $this->resolvePurchaseOrderId($request, $validated, $purchaseOrderStorageChanges);
+                $storeId = (int) $validated['store_id'];
 
-        $productData = [
-            'base_sku' => $validated['base_sku'],
-            'category_id' => $validated['category_id'],
-            'purchase_order_id' => $purchaseOrderId,
-            'name' => $validated['name'],
-            'description' => $validated['description'] ?? null,
-            'video_url' => $validated['video_url'] ?? null,
-            'price' => $validated['price'],
-            'purchase_price' => (Auth::check() && Auth::user()->is_helper) ? 0.00 : ($validated['purchase_price'] ?? 0.00),
-            'images' => $processedImages,
-            'variants' => $processedVariants
-        ];
+                $productData = [
+                    'base_sku' => $validated['base_sku'],
+                    'category_id' => $validated['category_id'],
+                    'purchase_order_id' => $purchaseOrderId,
+                    'name' => $validated['name'],
+                    'description' => $validated['description'] ?? null,
+                    'video_url' => $validated['video_url'] ?? null,
+                    'price' => $validated['price'],
+                    'purchase_price' => (Auth::check() && Auth::user()->is_helper) ? 0.00 : ($validated['purchase_price'] ?? 0.00),
+                    'images' => $processedImages,
+                    'variants' => $processedVariants
+                ];
 
-        $created = $this->productRepo->create($productData, $storeId);
+                return $this->productRepo->create($productData, $storeId);
+            });
+        } catch (\Throwable $e) {
+            $this->cleanupUploadedImages($uploadedImageUrls);
+            $this->cleanupUploadedImages($purchaseOrderStorageChanges['uploaded'], 'purchase order file');
+            throw $e;
+        }
+
+        $this->cleanupUploadedImages($purchaseOrderStorageChanges['replaced'], 'replaced purchase order file');
 
         return response()->json([
             'success' => true,
@@ -371,33 +500,86 @@ class ProductController extends Controller
             }
         }
 
-        // Upload any new provided files
-        if ($request->hasFile('images')) {
-            $hasPrimary = DB::select("SELECT id FROM product_images WHERE product_id = ? AND is_primary = 1", [$product->id]);
-            foreach ($request->file('images') as $file) {
-                $url = $this->cloudinaryService->upload($file, 'ecommerce_products');
-                DB::insert("
-                    INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at) 
-                    VALUES (?, ?, ?, NOW(), NOW())
-                ", [$product->id, $url, empty($hasPrimary) ? 1 : 0]);
-                $hasPrimary = true;
+        $targetBaseSku = !empty($validated['base_sku']) ? $validated['base_sku'] : $baseSku;
+        if ($this->hasOversizedVariantSku($targetBaseSku, $validated['variants'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'La combinación del SKU base y la talla genera un SKU de variante demasiado largo. Reduce el SKU base o la talla.'
+            ], 422);
+        }
+
+        // Keep variant IDs scoped to this product and reject duplicate IDs before
+        // uploading files or changing any product data.
+        $submittedVariantIds = [];
+        foreach ($validated['variants'] as $variant) {
+            if (isset($variant['id'])) {
+                $submittedVariantIds[] = (int) $variant['id'];
             }
         }
 
-        if (!empty($validated['image_urls'])) {
-            $hasPrimary = DB::select("SELECT id FROM product_images WHERE product_id = ? AND is_primary = 1", [$product->id]);
-            foreach ($validated['image_urls'] as $url) {
-                if (!empty($url)) {
-                    $exists = DB::select("SELECT id FROM product_images WHERE product_id = ? AND image_url = ?", [$product->id, $url]);
-                    if (empty($exists)) {
-                        DB::insert("
-                            INSERT INTO product_images (product_id, image_url, is_primary, created_at, updated_at) 
-                            VALUES (?, ?, ?, NOW(), NOW())
-                        ", [$product->id, $url, empty($hasPrimary) ? 1 : 0]);
-                        $hasPrimary = true;
-                    }
+        $uniqueVariantIds = array_values(array_unique($submittedVariantIds));
+        if (count($uniqueVariantIds) !== count($submittedVariantIds)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'La solicitud contiene variantes duplicadas.'
+            ], 422);
+        }
+
+        if (!empty($uniqueVariantIds)) {
+            $placeholders = implode(',', array_fill(0, count($uniqueVariantIds), '?'));
+            $ownedVariants = DB::select(
+                "SELECT id FROM product_variants WHERE product_id = ? AND id IN ($placeholders)",
+                array_merge([$product->id], $uniqueVariantIds)
+            );
+
+            if (count($ownedVariants) !== count($uniqueVariantIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Una o más variantes no pertenecen a este producto. Recarga el producto e inténtalo de nuevo.'
+                ], 422);
+            }
+        }
+
+        // Sales keep a restrictive reference to their original variant. Reject
+        // attempts to remove a sold variant before uploading any new images.
+        $soldVariants = DB::select(
+            'SELECT DISTINCT pv.id
+             FROM product_variants pv
+             INNER JOIN sale_items si ON si.variant_id = pv.id
+             WHERE pv.product_id = ?',
+            [$product->id]
+        );
+        $soldVariantIds = array_map(static fn ($variant) => (int) $variant->id, $soldVariants);
+        $existingVariantRows = DB::select('SELECT id FROM product_variants WHERE product_id = ?', [$product->id]);
+        $existingVariantIds = array_map(static fn ($variant) => (int) $variant->id, $existingVariantRows);
+        $removedSoldVariantIds = array_values(array_intersect(
+            $soldVariantIds,
+            array_diff($existingVariantIds, $uniqueVariantIds)
+        ));
+
+        if (!empty($removedSoldVariantIds)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No puedes eliminar variantes que ya tienen ventas registradas. Conserva esas variantes y pon su stock en 0.'
+            ], 422);
+        }
+
+        // Upload new image files now, but defer their database rows to the
+        // repository transaction together with the product and its variants.
+        $processedImages = [];
+        $uploadedImageUrls = [];
+
+        try {
+            if ($request->hasFile('images')) {
+                foreach ($request->file('images') as $file) {
+                    $url = $this->cloudinaryService->upload($file, 'ecommerce_products');
+                    $uploadedImageUrls[] = $url;
+                    $processedImages[] = ['url' => $url];
                 }
             }
+        } catch (\Throwable $e) {
+            $this->cleanupUploadedImages($uploadedImageUrls);
+            throw $e;
         }
 
         $processedVariants = [];
@@ -418,28 +600,41 @@ class ProductController extends Controller
             ];
         }
 
-        $purchaseOrderId = $this->resolvePurchaseOrderId($request, $validated);
-        // If option is none, we explicitly clean it. If option is not provided, we keep the previous purchase_order_id.
-        $updatePayload = [
-            'base_sku' => $validated['base_sku'] ?? $baseSku,
-            'category_id' => $validated['category_id'],
-            'name' => $validated['name'],
-            'price' => $validated['price'],
-            'purchase_price' => (Auth::check() && Auth::user()->is_helper) ? $product->purchase_price : ($validated['purchase_price'] ?? 0.00),
-            'description' => $validated['description'] ?? null,
-            'video_url' => $validated['video_url'] ?? null,
-            'variants' => $processedVariants
-        ];
+        $purchaseOrderStorageChanges = ['uploaded' => [], 'replaced' => []];
+        try {
+            $updated = DB::transaction(function () use ($request, $validated, $product, $baseSku, $processedImages, $processedVariants, &$purchaseOrderStorageChanges) {
+                $purchaseOrderId = $this->resolvePurchaseOrderId($request, $validated, $purchaseOrderStorageChanges);
+                // If option is none, we explicitly clean it. If option is not provided, we keep the previous purchase_order_id.
+                $updatePayload = [
+                    'base_sku' => $validated['base_sku'] ?? $baseSku,
+                    'category_id' => $validated['category_id'],
+                    'name' => $validated['name'],
+                    'price' => $validated['price'],
+                    'purchase_price' => (Auth::check() && Auth::user()->is_helper) ? $product->purchase_price : ($validated['purchase_price'] ?? 0.00),
+                    'description' => $validated['description'] ?? null,
+                    'video_url' => $validated['video_url'] ?? null,
+                    'images' => $processedImages,
+                    'image_urls' => $validated['image_urls'] ?? [],
+                    'variants' => $processedVariants
+                ];
 
-        if (isset($validated['purchase_order_option'])) {
-            $updatePayload['purchase_order_id'] = $purchaseOrderId;
-        } else {
-            $updatePayload['purchase_order_id'] = $product->purchase_order_id;
+                if (isset($validated['purchase_order_option'])) {
+                    $updatePayload['purchase_order_id'] = $purchaseOrderId;
+                } else {
+                    $updatePayload['purchase_order_id'] = $product->purchase_order_id;
+                }
+
+                $storeId = (int) $validated['store_id'];
+
+                return $this->productRepo->update($baseSku, $updatePayload, $storeId);
+            });
+        } catch (\Throwable $e) {
+            $this->cleanupUploadedImages($uploadedImageUrls);
+            $this->cleanupUploadedImages($purchaseOrderStorageChanges['uploaded'], 'purchase order file');
+            throw $e;
         }
 
-        $storeId = (int) $validated['store_id'];
-
-        $updated = $this->productRepo->update($baseSku, $updatePayload, $storeId);
+        $this->cleanupUploadedImages($purchaseOrderStorageChanges['replaced'], 'replaced purchase order file');
 
         return response()->json([
             'success' => true,
@@ -535,8 +730,10 @@ class ProductController extends Controller
         ]);
     }
 
-    private function resolvePurchaseOrderId(Request $request, array $validated)
+    private function resolvePurchaseOrderId(Request $request, array $validated, array &$storageChanges)
     {
+        $storageChanges['uploaded'] ??= [];
+        $storageChanges['replaced'] ??= [];
         $option = $validated['purchase_order_option'] ?? 'none';
         
         if ($option === 'none') {
@@ -551,8 +748,14 @@ class ProductController extends Controller
                 $updateParams = [];
                 
                 if ($request->hasFile('purchase_order_file')) {
+                    $previousFile = DB::select('SELECT file_url FROM purchase_orders WHERE id = ?', [$poId]);
+                    if (!empty($previousFile[0]->file_url)) {
+                        $storageChanges['replaced'][] = $previousFile[0]->file_url;
+                    }
+
                     $file = $request->file('purchase_order_file');
                     $fileUrl = $this->cloudinaryService->upload($file, 'purchase_orders');
+                    $storageChanges['uploaded'][] = $fileUrl;
                     $updateData[] = "file_url = ?";
                     $updateParams[] = $fileUrl;
                 }
@@ -583,10 +786,11 @@ class ProductController extends Controller
                 }
                 
                 if (!empty($updateData)) {
+                    $updateParams[] = now();
                     $updateParams[] = $poId;
                     DB::update("
                         UPDATE purchase_orders 
-                        SET " . implode(", ", $updateData) . ", updated_at = NOW() 
+                        SET " . implode(", ", $updateData) . ", updated_at = ?
                         WHERE id = ?
                     ", $updateParams);
                 }
@@ -600,10 +804,11 @@ class ProductController extends Controller
             if ($request->hasFile('purchase_order_file')) {
                 $file = $request->file('purchase_order_file');
                 $fileUrl = $this->cloudinaryService->upload($file, 'purchase_orders');
+                $storageChanges['uploaded'][] = $fileUrl;
                 
                 DB::insert("
                     INSERT INTO purchase_orders (order_number, file_url, provider, purchase_date, total_amount, observations, status, created_by, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ", [
                     $validated['purchase_order_number'] ?? null,
                     $fileUrl,
@@ -612,7 +817,9 @@ class ProductController extends Controller
                     $validated['purchase_order_total'] ?? null,
                     $validated['purchase_order_observations'] ?? null,
                     $validated['purchase_order_status'] ?? null,
-                    Auth::id()
+                    Auth::id(),
+                    now(),
+                    now()
                 ]);
                 
                 return DB::getPdo()->lastInsertId();

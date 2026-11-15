@@ -5,7 +5,8 @@ namespace App\Http\Controllers;
 use App\Repositories\BannerRepository;
 use App\Services\CloudinaryService;
 use Illuminate\Http\Request;
-use Exception;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class BannerController extends Controller
 {
@@ -16,6 +17,21 @@ class BannerController extends Controller
     {
         $this->bannerRepo = $bannerRepo;
         $this->cloudinaryService = $cloudinaryService;
+    }
+
+    private function cleanupImage(string $imageUrl, string $context): bool
+    {
+        try {
+            $deleted = $this->cloudinaryService->delete($imageUrl);
+            if (!$deleted) {
+                Log::warning($context);
+            }
+
+            return $deleted;
+        } catch (Throwable $e) {
+            Log::warning($context, ['error' => $e->getMessage()]);
+            return false;
+        }
     }
 
     public function index()
@@ -49,6 +65,7 @@ class BannerController extends Controller
             'sort_order.unique' => 'Ya existe un banner con este orden de visualización.'
         ]);
 
+        $imageUrl = null;
         try {
             $imageUrl = $this->cloudinaryService->upload($request->file('image'), 'banners');
 
@@ -63,7 +80,11 @@ class BannerController extends Controller
                 'message' => 'Banner creado exitosamente.',
                 'banner' => $banner
             ], 201);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
+            if ($imageUrl) {
+                $this->cleanupImage($imageUrl, 'New banner image could not be cleaned up after create failed.');
+            }
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al crear banner: ' . $e->getMessage()
@@ -92,6 +113,8 @@ class BannerController extends Controller
             'sort_order.unique' => 'Ya existe un banner con este orden de visualización.'
         ]);
 
+        $newImageUrl = null;
+        $oldImageUrl = $banner->image_url;
         try {
             $data = [];
             if (isset($validated['is_active'])) {
@@ -102,26 +125,38 @@ class BannerController extends Controller
             }
 
             if ($request->hasFile('image')) {
-                // Delete previous image first
-                if (!empty($banner->image_url)) {
-                    $this->cloudinaryService->delete($banner->image_url);
-                }
-                $data['image_url'] = $this->cloudinaryService->upload($request->file('image'), 'banners');
+                $newImageUrl = $this->cloudinaryService->upload($request->file('image'), 'banners');
+                $data['image_url'] = $newImageUrl;
             }
 
             $updated = $this->bannerRepo->update($id, $data);
+        } catch (Throwable $e) {
+            if ($newImageUrl) {
+                $this->cleanupImage($newImageUrl, 'New banner image could not be cleaned up after update failed.');
+            }
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Banner actualizado exitosamente.',
-                'banner' => $updated
-            ]);
-        } catch (Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error al actualizar banner: ' . $e->getMessage()
             ], 500);
         }
+
+        $storageCleanupPending = false;
+        if ($newImageUrl && $oldImageUrl && $newImageUrl !== $oldImageUrl) {
+            $storageCleanupPending = !$this->cleanupImage(
+                $oldImageUrl,
+                'Replaced banner image remains in storage after update.'
+            );
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $storageCleanupPending
+                ? 'Banner actualizado; la limpieza de la imagen anterior quedó pendiente.'
+                : 'Banner actualizado exitosamente.',
+            'banner' => $updated,
+            'storage_cleanup_pending' => $storageCleanupPending,
+        ]);
     }
 
     public function toggleActive(int $id)
@@ -176,20 +211,28 @@ class BannerController extends Controller
         }
 
         try {
-            if (!empty($banner->image_url)) {
-                $this->cloudinaryService->delete($banner->image_url);
+            if (!$this->bannerRepo->delete($id)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Banner no encontrado.'
+                ], 404);
             }
-            $this->bannerRepo->delete($id);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Banner eliminado exitosamente.'
-            ]);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error al eliminar banner: ' . $e->getMessage()
             ], 500);
         }
+
+        $storageCleanupPending = !empty($banner->image_url)
+            && !$this->cleanupImage($banner->image_url, 'Deleted banner image remains in storage.');
+
+        return response()->json([
+            'success' => true,
+            'message' => $storageCleanupPending
+                ? 'Banner eliminado; la limpieza de su imagen quedó pendiente.'
+                : 'Banner eliminado exitosamente.',
+            'storage_cleanup_pending' => $storageCleanupPending,
+        ]);
     }
 }
