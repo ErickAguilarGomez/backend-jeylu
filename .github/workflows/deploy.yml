@@ -30,6 +30,8 @@ jobs:
         run: composer install --no-interaction --prefer-dist --no-progress
 
       - name: Run backend tests
+        env:
+          APP_KEY: 'base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
         run: php artisan test
 
       - name: Set up Docker Buildx
