@@ -46,6 +46,26 @@ class EcommerceApiTest extends TestCase
                  ->assertJsonStructure(['success', 'user' => ['id', 'name', 'email', 'role_id'], 'token']);
     }
 
+    public function test_login_rate_limits_repeated_failed_credentials()
+    {
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $this->postJson('/api/auth/login', [
+                'email' => 'admin@jeilu.com',
+                'password' => 'wrongpassword',
+            ])->assertUnauthorized();
+        }
+
+        $this->postJson('/api/auth/login', [
+            'email' => 'admin@jeilu.com',
+            'password' => 'wrongpassword',
+        ])->assertTooManyRequests();
+
+        $this->postJson('/api/auth/login', [
+            'email' => 'another-user@jeilu.com',
+            'password' => 'wrongpassword',
+        ])->assertUnauthorized();
+    }
+
     public function test_csrf_token_endpoint()
     {
         $response = $this->getJson('/api/auth/csrf-token');
@@ -193,6 +213,71 @@ class EcommerceApiTest extends TestCase
         ]);
         $response->assertStatus(422)
                  ->assertJsonValidationErrors(['category_id']);
+    }
+
+    public function test_product_edit_by_id_supports_base_skus_with_slashes()
+    {
+        $admin = User::find(1);
+        $this->actingAs($admin)->postJson('/api/products', [
+            'base_sku' => '1002/NA',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto con SKU compuesto',
+            'price' => 89.90,
+            'variants' => [
+                ['size' => 'M', 'color' => 'Negro', 'stocks' => [1 => 10]],
+            ],
+        ])->assertCreated();
+
+        $productId = (int) DB::select(
+            'SELECT id FROM products WHERE base_sku = ? LIMIT 1',
+            ['1002/NA']
+        )[0]->id;
+
+        $this->getJson("/api/products/by-id/{$productId}")
+            ->assertOk()
+            ->assertJsonPath('data.id', $productId)
+            ->assertJsonPath('data.sku', '1002/NA');
+
+        $this->actingAs($admin)->postJson("/api/products/by-id/{$productId}", [
+            'base_sku' => '1002/NA',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto con SKU compuesto editado',
+            'price' => 99.90,
+            'variants' => [
+                ['size' => 'M', 'color' => 'Negro', 'stocks' => [1 => 12]],
+            ],
+        ])->assertOk()
+            ->assertJsonPath('data.sku', '1002/NA')
+            ->assertJsonPath('data.name', 'Producto con SKU compuesto editado');
+
+        $this->actingAs($admin)->postJson('/api/products', [
+            'base_sku' => 'SKU-COLLISION',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto padre de variante',
+            'price' => 79.90,
+            'variants' => [
+                ['size' => 'M', 'color' => 'Negro', 'stocks' => [1 => 4]],
+            ],
+        ])->assertCreated();
+
+        DB::insert(
+            'INSERT INTO products (base_sku, category_id, store_id, name, price, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            ['SKU-COLLISION-M', 1, 1, 'Producto con SKU igual a una variante ajena', 89.90, now(), now()]
+        );
+        $collisionProductId = (int) DB::getPdo()->lastInsertId();
+        DB::insert(
+            'INSERT INTO product_variants (product_id, sku, size, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+            [$collisionProductId, 'SKU-COLLISION-M-L', 'L', 'Azul', now(), now()]
+        );
+
+        $this->getJson("/api/products/by-id/{$collisionProductId}")
+            ->assertOk()
+            ->assertJsonPath('data.id', $collisionProductId)
+            ->assertJsonPath('data.sku', 'SKU-COLLISION-M')
+            ->assertJsonPath('data.name', 'Producto con SKU igual a una variante ajena');
     }
 
     public function test_product_create_accepts_multiple_images_and_variants()
@@ -837,6 +922,127 @@ class EcommerceApiTest extends TestCase
         $inventory = DB::select("SELECT stock FROM store_inventories WHERE store_id = 1 AND variant_id = ? LIMIT 1", [$variant->id])[0];
         $this->assertEquals(3, $inventory->stock); // 5 - 2 = 3
 
+    }
+
+    public function test_public_checkout_rejects_non_positive_quantities_without_changing_stock()
+    {
+        $admin = User::find(1);
+
+        $this->actingAs($admin)->postJson('/api/products', [
+            'base_sku' => 'CHECKOUT-QUANTITY-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto para validar cantidad',
+            'price' => 50.00,
+            'variants' => [[
+                'size' => 'S',
+                'color' => 'Negro',
+                'stocks' => [1 => 5],
+            ]],
+        ])->assertCreated();
+
+        $variant = DB::select(
+            'SELECT id FROM product_variants WHERE sku = ?',
+            ['CHECKOUT-QUANTITY-TEST-S']
+        )[0];
+
+        foreach ([-2, 0, 'no-numérico'] as $quantity) {
+            $response = $this->postJson('/api/sales/checkout', [
+                'items' => [[
+                    'sku' => 'CHECKOUT-QUANTITY-TEST-S',
+                    'quantity' => $quantity,
+                ]],
+                'customer_name' => 'Cliente de prueba',
+                'customer_phone' => '999999999',
+                'delivery_type' => 'pickup',
+                'store_id' => 1,
+            ]);
+
+            $response->assertUnprocessable()
+                ->assertJsonValidationErrors(['items.0.quantity']);
+        }
+
+        $this->assertSame(5, (int) DB::select(
+            'SELECT stock FROM store_inventories WHERE store_id = 1 AND variant_id = ?',
+            [$variant->id]
+        )[0]->stock);
+        $this->assertSame(0, (int) DB::select('SELECT COUNT(*) AS total FROM sales')[0]->total);
+    }
+
+    public function test_public_pickup_checkout_does_not_silently_switch_the_selected_store()
+    {
+        DB::insert(
+            'INSERT INTO stores (id, name, address, phone, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+            [2, 'Sucursal Norte de prueba', 'Av. Norte 200', null, now(), now()]
+        );
+
+        $productRepo = app(\App\Repositories\ProductRepository::class);
+        $productRepo->create([
+            'base_sku' => 'CHECKOUT-PICKUP-STORE-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto con inventario por sucursal',
+            'price' => 75.00,
+            'purchase_price' => 30.00,
+            'variants' => [[
+                'size' => 'M',
+                'color' => 'Azul',
+                'stocks' => [1 => 5, 2 => 5],
+            ]],
+        ], 1);
+
+        $variant = DB::select(
+            'SELECT id FROM product_variants WHERE sku = ?',
+            ['CHECKOUT-PICKUP-STORE-TEST-M']
+        )[0];
+
+        $payload = [
+            'items' => [[
+                'sku' => 'CHECKOUT-PICKUP-STORE-TEST-M',
+                'quantity' => 1,
+            ]],
+            'customer_name' => 'Cliente de prueba',
+            'customer_phone' => '999999999',
+            'delivery_type' => 'pickup',
+            'store_id' => 2,
+        ];
+
+        $this->postJson('/api/sales/checkout', $payload)->assertCreated();
+        $this->assertSame(2, (int) DB::select('SELECT store_id FROM sales')[0]->store_id);
+
+        DB::update(
+            'UPDATE store_inventories SET stock = 0 WHERE store_id = 2 AND variant_id = ?',
+            [$variant->id]
+        );
+
+        $this->postJson('/api/sales/checkout', $payload)->assertUnprocessable();
+
+        $this->assertSame(5, (int) DB::select(
+            'SELECT stock FROM store_inventories WHERE store_id = 1 AND variant_id = ?',
+            [$variant->id]
+        )[0]->stock);
+        $this->assertSame(0, (int) DB::select(
+            'SELECT stock FROM store_inventories WHERE store_id = 2 AND variant_id = ?',
+            [$variant->id]
+        )[0]->stock);
+        $this->assertSame(1, (int) DB::select('SELECT COUNT(*) AS total FROM sales')[0]->total);
+    }
+
+    public function test_public_checkout_rate_limits_repeated_requests()
+    {
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $this->postJson('/api/sales/checkout', [
+                'customer_phone' => '999000001',
+            ])->assertUnprocessable();
+        }
+
+        $this->postJson('/api/sales/checkout', [
+            'customer_phone' => '999000001',
+        ])->assertTooManyRequests();
+
+        $this->postJson('/api/sales/checkout', [
+            'customer_phone' => '999000002',
+        ])->assertUnprocessable();
     }
 
     public function test_admin_sales_stats()

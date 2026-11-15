@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SaleController;
 
 // Endpoint público para compra online desde el carrito con despacho
-Route::post('/checkout', [SaleController::class, 'publicCheckout']);
+Route::post('/checkout', [SaleController::class, 'publicCheckout'])->middleware('throttle:public-checkout');
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/', [SaleController::class, 'index']);

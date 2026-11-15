@@ -294,12 +294,15 @@ class SaleController extends Controller
     {
         $validated = $request->validate([
             'items' => ['required', 'array', 'min:1'],
+            'items.*' => ['required', 'array'],
+            'items.*.sku' => ['required', 'string', 'max:100'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
             'customer_name' => ['required', 'string', 'max:255'],
             'customer_phone' => ['required', 'string', 'max:100'],
             'customer_email' => ['nullable', 'email', 'max:191'],
             'delivery_type' => ['required', 'string', 'in:pickup,delivery'],
             'delivery_address' => ['nullable', 'string'],
-            'store_id' => ['nullable', 'integer'],
+            'store_id' => ['nullable', 'required_if:delivery_type,pickup', 'integer', 'exists:stores,id'],
             'order_notes' => ['nullable', 'string', 'max:1000'],
             'card_name' => ['nullable', 'string', 'max:255'],
             'card_number' => ['nullable', 'string', 'max:30'],
