@@ -190,6 +190,9 @@ class SaleController extends Controller
             'items.*.quantity' => ['required', 'integer', 'min:1'],
             'items.*.price' => ['nullable', 'numeric', 'min:0'],
             'payment_method_id' => ['required', 'integer', 'exists:payment_methods,id'],
+            'payments' => ['sometimes', 'array', 'min:1'],
+            'payments.*.payment_method_id' => ['required_with:payments', 'integer', 'exists:payment_methods,id'],
+            'payments.*.amount' => ['required_with:payments', 'numeric', 'gt:0'],
             'customer_id' => ['nullable', 'integer', 'exists:users,id'],
             'customer_name' => ['nullable', 'string', 'max:255'],
             'store_id' => ['nullable', 'integer', 'exists:stores,id']
@@ -223,7 +226,8 @@ class SaleController extends Controller
                 $validated['items'],
                 $validated['customer_id'] ?? null,
                 $validated['customer_name'] ?? null,
-                $validated['payment_method_id']
+                $validated['payment_method_id'],
+                $validated['payments'] ?? null
             );
             return response()->json($result, 201);
         } catch (Exception $e) {
@@ -265,6 +269,9 @@ class SaleController extends Controller
             'items.*.sku' => ['required', 'string'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
             'items.*.price' => ['nullable', 'numeric', 'min:0'],
+            'payments' => ['sometimes', 'array', 'min:1'],
+            'payments.*.payment_method_id' => ['required_with:payments', 'integer', 'exists:payment_methods,id'],
+            'payments.*.amount' => ['required_with:payments', 'numeric', 'gt:0'],
             'status' => ['required', 'string', 'in:COMPLETED,EXCHANGED,REFUNDED,CANCELLED'],
             'customer_name' => ['nullable', 'string', 'max:255']
         ]);
@@ -275,7 +282,8 @@ class SaleController extends Controller
                 $validated['items'],
                 $validated['status'],
                 $validated['customer_name'] ?? null,
-                $user->id
+                $user->id,
+                $validated['payments'] ?? null
             );
 
             return response()->json($result);
@@ -320,14 +328,9 @@ class SaleController extends Controller
             ], 422);
         }
 
-        try {
-            $result = $this->saleService->processCheckoutSale($validated);
-            return response()->json($result, 201);
-        } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 422);
-        }
+        return response()->json([
+            'success' => false,
+            'message' => 'Los pagos en línea aún no están disponibles. Coordina tu compra por WhatsApp.'
+        ], 503);
     }
 }

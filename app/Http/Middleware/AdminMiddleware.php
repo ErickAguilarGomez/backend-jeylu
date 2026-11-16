@@ -22,8 +22,11 @@ class AdminMiddleware
         // Si el usuario es Vendedor Ayudante (is_helper)
         if ($user->is_helper) {
             $path = $request->path();
-            // Los ayudantes SOLO pueden acceder a productos, categorías y sucursales
-            if (str_contains($path, 'products') || str_contains($path, 'categories') || str_contains($path, 'stores')) {
+            // Helpers can manage catalog resources; the product form only needs the store list.
+            $canAccessCatalog = preg_match('#^api/(products|categories)(?:/|$)#', $path) === 1;
+            $canListStores = $request->isMethod('GET') && $path === 'api/stores';
+
+            if ($canAccessCatalog || $canListStores) {
                 return $next($request);
             }
 
