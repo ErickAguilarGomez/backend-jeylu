@@ -1740,6 +1740,7 @@ class EcommerceApiTest extends TestCase
         $saleResponse = $this->postJson('/api/sales', [
             'items' => [['sku' => 'MIXED-PAY-EDIT-INVALID-TEST-M', 'quantity' => 1]],
             'payment_method_id' => 1,
+            'customer_name' => 'Cliente prueba',
             'payments' => [
                 ['payment_method_id' => 1, 'amount' => 40.00],
                 ['payment_method_id' => 2, 'amount' => 60.00],
@@ -1797,6 +1798,7 @@ class EcommerceApiTest extends TestCase
         $saleResponse = $this->postJson('/api/sales', [
             'items' => [['sku' => 'MIXED-PAY-EDIT-MISMATCH-TEST-M', 'quantity' => 1]],
             'payment_method_id' => 1,
+            'customer_name' => 'Cliente prueba',
             'payments' => [
                 ['payment_method_id' => 1, 'amount' => 40.00],
                 ['payment_method_id' => 2, 'amount' => 60.00],
