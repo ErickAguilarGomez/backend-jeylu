@@ -1467,6 +1467,50 @@ class EcommerceApiTest extends TestCase
             ->assertOk();
     }
 
+    public function test_helper_can_register_pos_sales()
+    {
+        $helperId = DB::table('users')->insertGetId([
+            'role_id' => 2,
+            'is_helper' => true,
+            'name' => 'POS Helper',
+            'email' => 'pos-helper@example.test',
+            'password' => Hash::make('test-password'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('store_user')->insert([
+            'store_id' => 1,
+            'user_id' => $helperId,
+            'is_primary' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $timestamp = now();
+        DB::insert("INSERT INTO products (id, base_sku, category_id, store_id, name, price, created_at, updated_at) VALUES (901, 'HELPER-POS', 1, 1, 'Helper POS Product', 25.00, ?, ?)", [$timestamp, $timestamp]);
+        DB::insert("INSERT INTO product_variants (id, product_id, sku, size, created_at, updated_at) VALUES (901, 901, 'HELPER-POS-SKU', 'M', ?, ?)", [$timestamp, $timestamp]);
+        DB::insert("INSERT INTO store_inventories (store_id, variant_id, stock, created_at, updated_at) VALUES (1, 901, 3, ?, ?)", [$timestamp, $timestamp]);
+
+        $this->actingAs(User::findOrFail($helperId))->postJson('/api/sales', [
+            'items' => [['sku' => 'HELPER-POS-SKU', 'quantity' => 1]],
+            'payment_method_id' => 1,
+        ])->assertCreated();
+    }
+
+    public function test_admin_role_cannot_be_saved_as_helper()
+    {
+        $admin = User::findOrFail(1);
+
+        $this->actingAs($admin)->postJson('/api/users', [
+            'name' => 'Invalid Admin Helper',
+            'email' => 'invalid-admin-helper@example.test',
+            'password' => 'test-password',
+            'role_id' => 1,
+            'is_helper' => true,
+        ])->assertUnprocessable()->assertJsonValidationErrors('is_helper');
+
+        $this->assertDatabaseMissing('users', ['email' => 'invalid-admin-helper@example.test']);
+    }
+
     public function test_seller_commission_configuration()
     {
         $admin = User::find(1);
