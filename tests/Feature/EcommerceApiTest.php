@@ -235,21 +235,14 @@ class EcommerceApiTest extends TestCase
     public function test_product_edit_by_id_supports_base_skus_with_slashes()
     {
         $admin = User::find(1);
-        $this->actingAs($admin)->postJson('/api/products', [
+        // Seed a legacy SKU that predates the format validation.
+        $productId = DB::table('products')->insertGetId([
             'base_sku' => '1002/NA',
             'category_id' => 1,
             'store_id' => 1,
             'name' => 'Producto con SKU compuesto',
             'price' => 89.90,
-            'variants' => [
-                ['size' => 'M', 'color' => 'Negro', 'stocks' => [1 => 10]],
-            ],
-        ])->assertCreated();
-
-        $productId = (int) DB::select(
-            'SELECT id FROM products WHERE base_sku = ? LIMIT 1',
-            ['1002/NA']
-        )[0]->id;
+        ]);
 
         $this->getJson("/api/products/by-id/{$productId}")
             ->assertOk()
@@ -295,6 +288,45 @@ class EcommerceApiTest extends TestCase
             ->assertJsonPath('data.id', $collisionProductId)
             ->assertJsonPath('data.sku', 'SKU-COLLISION-M')
             ->assertJsonPath('data.name', 'Producto con SKU igual a una variante ajena');
+    }
+
+    public function test_product_creation_and_sku_edits_reject_invalid_sku_characters(): void
+    {
+        $this->actingAs(User::find(1));
+        $payload = [
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'SKU format product',
+            'price' => 89.90,
+            'variants' => [
+                ['size' => 'M', 'stocks' => [1 => 10]],
+            ],
+        ];
+
+        $productId = $this->postJson('/api/products', ['base_sku' => 'BASE-123'] + $payload)
+            ->assertCreated()
+            ->json('data.id');
+
+        foreach (['2000/G', 'SKU_1', 'SKU 1'] as $sku) {
+            $this->postJson('/api/products', ['base_sku' => $sku, 'name' => 'Invalid SKU product'] + $payload)
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors('base_sku');
+            $this->postJson("/api/products/by-id/{$productId}", ['base_sku' => $sku] + $payload)
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors('base_sku');
+            $this->assertDatabaseMissing('products', ['base_sku' => $sku]);
+        }
+
+        $this->assertDatabaseHas('products', ['id' => $productId, 'base_sku' => 'BASE-123']);
+
+        $this->postJson('/api/products', ['base_sku' => '', 'name' => 'Blank SKU product'] + $payload)
+            ->assertCreated()
+            ->assertJsonPath('data.sku', fn ($sku) => is_string($sku) && preg_match('/\A[A-Za-z0-9-]+\z/', $sku) === 1);
+
+        $this->postJson("/api/products/by-id/{$productId}", ['base_sku' => '0'] + $payload)
+            ->assertOk()
+            ->assertJsonPath('data.sku', '0')
+            ->assertJsonPath('data.variants.0.sku', '0-M');
     }
 
     public function test_product_create_accepts_multiple_images_and_variants()

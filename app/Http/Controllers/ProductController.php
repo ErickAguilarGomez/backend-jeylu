@@ -14,6 +14,9 @@ use Illuminate\Support\Facades\Log;
 
 class ProductController extends Controller
 {
+    private const BASE_SKU_FORMAT = 'regex:/\A[A-Za-z0-9-]+\z/';
+    private const BASE_SKU_FORMAT_MESSAGE = 'El SKU solo puede contener letras, números y guiones (-).';
+
     protected $productRepo;
     protected $cloudinaryService;
 
@@ -322,7 +325,7 @@ class ProductController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'base_sku' => ['nullable', 'string', 'max:100'],
+            'base_sku' => ['nullable', 'string', 'max:100', self::BASE_SKU_FORMAT],
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'store_id' => ['required', 'integer', 'exists:stores,id'],
             'name' => ['required', 'string', 'max:255'],
@@ -351,11 +354,12 @@ class ProductController extends Controller
             'purchase_order_status' => ['nullable', 'string', 'max:100'],
             'purchase_order_observations' => ['nullable', 'string'],
         ], [
+            'base_sku.regex' => self::BASE_SKU_FORMAT_MESSAGE,
             'variants.*.size.required' => 'La talla es obligatoria para todas las variantes.',
             'variants.*.stocks.required' => 'El stock por tienda es obligatorio.'
         ]);
 
-        if (empty($validated['base_sku'])) {
+        if (!isset($validated['base_sku'])) {
             $cleanName = substr(preg_replace('/[^A-Z0-9]/', '', strtoupper($validated['name'])), 0, 4);
             if (empty($cleanName)) {
                 $cleanName = 'PROD';
@@ -472,8 +476,13 @@ class ProductController extends Controller
             ], 404);
         }
 
+        $baseSkuRules = ['nullable', 'string', 'max:100'];
+        if ($request->input('base_sku') !== $baseSku) {
+            $baseSkuRules[] = self::BASE_SKU_FORMAT;
+        }
+
         $validated = $request->validate([
-            'base_sku' => ['nullable', 'string', 'max:100'],
+            'base_sku' => $baseSkuRules,
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'store_id' => ['required', 'integer', 'exists:stores,id'],
             'name' => ['required', 'string', 'max:255'],
@@ -503,12 +512,14 @@ class ProductController extends Controller
             'purchase_order_status' => ['nullable', 'string', 'max:100'],
             'purchase_order_observations' => ['nullable', 'string'],
         ], [
+            'base_sku.regex' => self::BASE_SKU_FORMAT_MESSAGE,
             'variants.*.size.required' => 'La talla es obligatoria para todas las variantes.',
             'variants.*.stocks.required' => 'El stock por tienda es obligatorio.'
         ]);
 
-        if (!empty($validated['base_sku']) && $validated['base_sku'] !== $baseSku) {
-            $existing = DB::select("SELECT id FROM products WHERE base_sku = ? AND id != ?", [$validated['base_sku'], $product->id]);
+        $targetBaseSku = $validated['base_sku'] ?? $baseSku;
+        if ($targetBaseSku !== $baseSku) {
+            $existing = DB::select("SELECT id FROM products WHERE base_sku = ? AND id != ?", [$targetBaseSku, $product->id]);
             if (!empty($existing)) {
                 return response()->json([
                     'success' => false,
@@ -517,7 +528,6 @@ class ProductController extends Controller
             }
         }
 
-        $targetBaseSku = !empty($validated['base_sku']) ? $validated['base_sku'] : $baseSku;
         if ($this->hasOversizedVariantSku($targetBaseSku, $validated['variants'], true)) {
             return response()->json([
                 'success' => false,
@@ -603,8 +613,6 @@ class ProductController extends Controller
         foreach ($validated['variants'] as $index => $v) {
             $size = $v['size'] ?? null;
             $color = $v['color'] ?? null;
-            $targetBaseSku = !empty($validated['base_sku']) ? $validated['base_sku'] : $baseSku;
-
             $processedVariants[] = [
                 'id' => $v['id'] ?? null,
                 'size' => $size,

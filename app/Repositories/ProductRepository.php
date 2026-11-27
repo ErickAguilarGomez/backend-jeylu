@@ -517,7 +517,7 @@ class ProductRepository
             $adjType = !empty($data['adjustment_type']) ? $data['adjustment_type'] : null;
             $adjValue = (!empty($adjType) && isset($data['adjustment_value'])) ? (float)$data['adjustment_value'] : null;
 
-            $newBaseSku = !empty($data['base_sku']) ? $data['base_sku'] : $baseSku;
+            $newBaseSku = isset($data['base_sku']) && $data['base_sku'] !== '' ? $data['base_sku'] : $baseSku;
 
             DB::update("
                 UPDATE products 
