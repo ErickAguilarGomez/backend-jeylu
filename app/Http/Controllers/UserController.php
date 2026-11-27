@@ -72,7 +72,11 @@ class UserController extends Controller
             'email' => 'required|email|max:255|unique:users',
             'password' => 'required|string|min:6',
             'role_id' => 'required|integer|exists:roles,id',
-            'is_helper' => 'nullable|boolean'
+            'is_helper' => ['nullable', 'boolean', function ($attribute, $value, $fail) use ($request) {
+                if ((int) $request->input('role_id') !== 2 && (bool) $value) {
+                    $fail('Solo un vendedor puede ser ayudante.');
+                }
+            }]
         ];
 
         if ($request->input('role_id') == 2) {
@@ -107,7 +111,11 @@ class UserController extends Controller
             'email' => 'required|email|max:255|unique:users,email,' . $id,
             'password' => 'nullable|string|min:6',
             'role_id' => 'required|integer|exists:roles,id',
-            'is_helper' => 'nullable|boolean'
+            'is_helper' => ['nullable', 'boolean', function ($attribute, $value, $fail) use ($request) {
+                if ((int) $request->input('role_id') !== 2 && (bool) $value) {
+                    $fail('Solo un vendedor puede ser ayudante.');
+                }
+            }]
         ];
 
         if ($request->input('role_id') == 2) {

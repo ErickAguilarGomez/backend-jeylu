@@ -15,7 +15,7 @@ class SaleService
         $this->saleRepo = $saleRepo;
     }
 
-    public function processSale(int $sellerId, int $storeId, array $items, ?int $customerId = null, ?string $customerName = null, ?int $paymentMethodId = null)
+    public function processSale(int $sellerId, int $storeId, array $items, ?int $customerId = null, ?string $customerName = null, ?int $paymentMethodId = null, ?array $payments = null)
     {
         DB::beginTransaction();
 
@@ -38,6 +38,7 @@ class SaleService
 
             $total = 0.00;
             $processedItems = [];
+            $processedPayments = [];
 
             $sellerData = DB::select("SELECT role_id, commission_percentage FROM users WHERE id = ? LIMIT 1", [$sellerId]);
             $commissionPercentage = 0.00;
@@ -86,6 +87,13 @@ class SaleService
                 ];
             }
 
+            if ($payments !== null) {
+                $paymentData = $this->preparePayments($payments, $total);
+                $processedPayments = $paymentData['payments'];
+                $paymentMethodId = $paymentData['payment_method_id'];
+                $paymentMethodName = $paymentData['payment_method_name'];
+            }
+
             $commissionAmount = $total * ($commissionPercentage / 100);
 
             $saleId = $this->saleRepo->persistSaleAndReduceStock(
@@ -98,7 +106,8 @@ class SaleService
                 $commissionPercentage,
                 $commissionAmount,
                 $paymentMethodId,
-                $paymentMethodName
+                $paymentMethodName,
+                $processedPayments
             );
 
             DB::commit();
@@ -115,7 +124,48 @@ class SaleService
         }
     }
 
-    public function updateSale(int $saleId, array $items, string $status, ?string $customerName, int $userId)
+    private function preparePayments(array $payments, float $saleTotal): array
+    {
+        if (empty($payments)) {
+            throw new Exception('Debes registrar al menos una forma de pago.');
+        }
+
+        $paymentTotal = 0.00;
+        $processedPayments = [];
+
+        foreach ($payments as $payment) {
+            $paymentMethod = DB::select(
+                'SELECT id, name, is_active FROM payment_methods WHERE id = ? LIMIT 1',
+                [(int) $payment['payment_method_id']]
+            );
+
+            if (empty($paymentMethod) || !$paymentMethod[0]->is_active) {
+                throw new Exception('Una de las formas de pago no está activa o no es válida.');
+            }
+
+            $amount = round((float) $payment['amount'], 2);
+            $paymentTotal += $amount;
+            $processedPayments[] = [
+                'payment_method_id' => (int) $paymentMethod[0]->id,
+                'payment_method_name' => $paymentMethod[0]->name,
+                'amount' => $amount,
+            ];
+        }
+
+        if (abs(round($paymentTotal, 2) - round($saleTotal, 2)) > 0.01) {
+            throw new Exception('La suma de los pagos no coincide con el total de la venta.');
+        }
+
+        return [
+            'payments' => $processedPayments,
+            'payment_method_id' => $processedPayments[0]['payment_method_id'],
+            'payment_method_name' => count($processedPayments) > 1
+                ? 'PAGO MIXTO'
+                : $processedPayments[0]['payment_method_name'],
+        ];
+    }
+
+    public function updateSale(int $saleId, array $items, string $status, ?string $customerName, int $userId, ?array $payments = null)
     {
         DB::beginTransaction();
 
@@ -228,16 +278,52 @@ class SaleService
             $commissionPercentage = (float) $sale->commission_percentage;
             $commissionAmount = $total * ($commissionPercentage / 100);
 
+            $paymentMethodId = $sale->payment_method_id;
+            $paymentMethodName = $sale->payment_method_name;
+            $processedPayments = null;
+
+            if ($payments !== null) {
+                $paymentData = $this->preparePayments($payments, $total);
+                $processedPayments = $paymentData['payments'];
+                $paymentMethodId = $paymentData['payment_method_id'];
+                $paymentMethodName = $paymentData['payment_method_name'];
+            } else {
+                $existingPayments = DB::select(
+                    'SELECT amount FROM sale_payments WHERE sale_id = ?',
+                    [$saleId]
+                );
+                $existingPaymentTotal = array_sum(array_map(
+                    fn ($payment) => (float) $payment->amount,
+                    $existingPayments
+                ));
+
+                if (!empty($existingPayments) && abs(round($existingPaymentTotal, 2) - round($total, 2)) > 0.01) {
+                    throw new Exception('Debes actualizar el desglose de pagos para que coincida con el nuevo total.');
+                }
+            }
+
+            if ($processedPayments !== null) {
+                DB::delete('DELETE FROM sale_payments WHERE sale_id = ?', [$saleId]);
+                foreach ($processedPayments as $payment) {
+                    DB::insert(
+                        'INSERT INTO sale_payments (sale_id, payment_method_id, payment_method_name, amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+                        [$saleId, $payment['payment_method_id'], $payment['payment_method_name'], $payment['amount'], $now, $now]
+                    );
+                }
+            }
+
             DB::update("
                 UPDATE sales 
                 SET total = ?, 
                     status = ?, 
                     customer_name = ?, 
                     commission_amount = ?, 
+                    payment_method_id = ?,
+                    payment_method_name = ?,
                     updated_by = ?, 
                     updated_at = ? 
                 WHERE id = ?
-            ", [$total, $status, $customerName, $commissionAmount, $userId, $now, $saleId]);
+            ", [$total, $status, $customerName, $commissionAmount, $paymentMethodId, $paymentMethodName, $userId, $now, $saleId]);
 
             DB::commit();
 

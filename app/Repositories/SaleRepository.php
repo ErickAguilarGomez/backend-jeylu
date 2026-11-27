@@ -91,6 +91,11 @@ class SaleRepository
                 INNER JOIN products p ON pv.product_id = p.id
                 WHERE si.sale_id = ?
             ", [$sale->id]);
+
+            $sale->payments = DB::select(
+                'SELECT payment_method_id, payment_method_name, amount FROM sale_payments WHERE sale_id = ? ORDER BY id',
+                [$sale->id]
+            );
         }
 
         $lastPage = (int) ceil($totalCount / $perPage);

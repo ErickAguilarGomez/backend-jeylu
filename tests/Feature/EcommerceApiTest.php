@@ -986,7 +986,7 @@ class EcommerceApiTest extends TestCase
         $this->assertSame(0, (int) DB::select('SELECT COUNT(*) AS total FROM sales')[0]->total);
     }
 
-    public function test_public_pickup_checkout_does_not_silently_switch_the_selected_store()
+    public function test_checkout_service_does_not_silently_switch_the_selected_store()
     {
         DB::insert(
             'INSERT INTO stores (id, name, address, phone, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -1024,7 +1024,8 @@ class EcommerceApiTest extends TestCase
             'store_id' => 2,
         ];
 
-        $this->postJson('/api/sales/checkout', $payload)->assertCreated();
+        $saleService = app(\App\Services\SaleService::class);
+        $saleService->processCheckoutSale($payload);
         $this->assertSame(2, (int) DB::select('SELECT store_id FROM sales')[0]->store_id);
 
         DB::update(
@@ -1032,7 +1033,12 @@ class EcommerceApiTest extends TestCase
             [$variant->id]
         );
 
-        $this->postJson('/api/sales/checkout', $payload)->assertUnprocessable();
+        try {
+            $saleService->processCheckoutSale($payload);
+            $this->fail('The checkout service must not switch a pickup order to another store.');
+        } catch (\Exception $exception) {
+            $this->assertStringContainsString('Stock insuficiente', $exception->getMessage());
+        }
 
         $this->assertSame(5, (int) DB::select(
             'SELECT stock FROM store_inventories WHERE store_id = 1 AND variant_id = ?',
@@ -1043,6 +1049,54 @@ class EcommerceApiTest extends TestCase
             [$variant->id]
         )[0]->stock);
         $this->assertSame(1, (int) DB::select('SELECT COUNT(*) AS total FROM sales')[0]->total);
+    }
+
+    public function test_public_checkout_without_payment_processing_does_not_create_a_completed_sale()
+    {
+        $productRepo = app(\App\Repositories\ProductRepository::class);
+        $productRepo->create([
+            'base_sku' => 'CHECKOUT-NO-PAYMENT-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto sin pago confirmado',
+            'price' => 75.00,
+            'purchase_price' => 30.00,
+            'variants' => [[
+                'size' => 'M',
+                'color' => 'Azul',
+                'stocks' => [1 => 5],
+            ]],
+        ], 1);
+
+        $variant = DB::select(
+            'SELECT id FROM product_variants WHERE sku = ?',
+            ['CHECKOUT-NO-PAYMENT-TEST-M-AZUL']
+        )[0];
+
+        $payload = [
+            'items' => [[
+                'sku' => 'CHECKOUT-NO-PAYMENT-TEST-M-AZUL',
+                'quantity' => 1,
+            ]],
+            'customer_name' => 'Cliente de prueba',
+            'customer_phone' => '999999999',
+            'delivery_type' => 'pickup',
+            'store_id' => 1,
+        ];
+
+        $this->postJson('/api/sales/checkout', $payload)->assertStatus(503)
+            ->assertJsonPath('success', false);
+        $this->postJson('/api/sales/checkout', $payload + [
+            'card_name' => 'Tarjeta de prueba',
+            'card_number' => '4242',
+        ])->assertStatus(503)
+            ->assertJsonPath('success', false);
+
+        $this->assertSame(0, (int) DB::select('SELECT COUNT(*) AS total FROM sales')[0]->total);
+        $this->assertSame(5, (int) DB::select(
+            'SELECT stock FROM store_inventories WHERE store_id = 1 AND variant_id = ?',
+            [$variant->id]
+        )[0]->stock);
     }
 
     public function test_public_checkout_rate_limits_repeated_requests()
@@ -1395,6 +1449,85 @@ class EcommerceApiTest extends TestCase
             ->assertJsonValidationErrors(['name']);
     }
 
+    public function test_helper_can_list_stores_for_products_but_cannot_read_store_employees()
+    {
+        DB::insert(
+            'INSERT INTO users (role_id, is_helper, name, email, password, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [2, 1, 'Vendedor Ayudante QA', 'helper-store-guard@example.test', Hash::make('test-password'), 1, 1, now(), now()]
+        );
+        $helper = User::query()->where('email', 'helper-store-guard@example.test')->firstOrFail();
+
+        $this->actingAs($helper, 'sanctum')
+            ->getJson('/api/stores?all=1')
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->actingAs($helper, 'sanctum')
+            ->getJson('/api/stores/1/employees')
+            ->assertForbidden();
+
+        $employeeId = (int) User::query()->where('role_id', 2)->where('is_helper', false)->value('id');
+        $assignmentsBefore = DB::table('store_user')->where('store_id', 1)->where('user_id', $employeeId)->count();
+
+        $this->actingAs($helper, 'sanctum')
+            ->postJson('/api/stores/1/employees', ['user_id' => $employeeId, 'is_primary' => true])
+            ->assertForbidden();
+
+        $this->actingAs($helper, 'sanctum')
+            ->deleteJson("/api/stores/1/employees/{$employeeId}")
+            ->assertForbidden();
+
+        $this->assertSame($assignmentsBefore, DB::table('store_user')->where('store_id', 1)->where('user_id', $employeeId)->count());
+
+        $this->actingAs(User::findOrFail(1), 'sanctum')
+            ->getJson('/api/stores/1/employees')
+            ->assertOk();
+    }
+
+    public function test_helper_can_register_pos_sales()
+    {
+        $helperId = DB::table('users')->insertGetId([
+            'role_id' => 2,
+            'is_helper' => true,
+            'name' => 'POS Helper',
+            'email' => 'pos-helper@example.test',
+            'password' => Hash::make('test-password'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('store_user')->insert([
+            'store_id' => 1,
+            'user_id' => $helperId,
+            'is_primary' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $timestamp = now();
+        DB::insert("INSERT INTO products (id, base_sku, category_id, store_id, name, price, created_at, updated_at) VALUES (901, 'HELPER-POS', 1, 1, 'Helper POS Product', 25.00, ?, ?)", [$timestamp, $timestamp]);
+        DB::insert("INSERT INTO product_variants (id, product_id, sku, size, created_at, updated_at) VALUES (901, 901, 'HELPER-POS-SKU', 'M', ?, ?)", [$timestamp, $timestamp]);
+        DB::insert("INSERT INTO store_inventories (store_id, variant_id, stock, created_at, updated_at) VALUES (1, 901, 3, ?, ?)", [$timestamp, $timestamp]);
+
+        $this->actingAs(User::findOrFail($helperId))->postJson('/api/sales', [
+            'items' => [['sku' => 'HELPER-POS-SKU', 'quantity' => 1]],
+            'payment_method_id' => 1,
+        ])->assertCreated();
+    }
+
+    public function test_admin_role_cannot_be_saved_as_helper()
+    {
+        $admin = User::findOrFail(1);
+
+        $this->actingAs($admin)->postJson('/api/users', [
+            'name' => 'Invalid Admin Helper',
+            'email' => 'invalid-admin-helper@example.test',
+            'password' => 'test-password',
+            'role_id' => 1,
+            'is_helper' => true,
+        ])->assertUnprocessable()->assertJsonValidationErrors('is_helper');
+
+        $this->assertDatabaseMissing('users', ['email' => 'invalid-admin-helper@example.test']);
+    }
+
     public function test_seller_commission_configuration()
     {
         $admin = User::find(1);
@@ -1458,6 +1591,268 @@ class EcommerceApiTest extends TestCase
         $sale = DB::select("SELECT commission_percentage, commission_amount, total FROM sales WHERE id = ? LIMIT 1", [$saleId])[0];
         $this->assertEquals(5.00, $sale->commission_percentage);
         $this->assertEquals(10.00, $sale->commission_amount);
+    }
+
+    public function test_pos_mixed_payments_are_saved_with_their_actual_amounts()
+    {
+        $seller = User::find(2);
+        DB::insert(
+            'INSERT INTO payment_methods (id, name, is_active, created_at, updated_at) VALUES (2, ?, 1, ?, ?)',
+            ['Tarjeta de prueba', now(), now()]
+        );
+
+        $this->actingAs($seller);
+        app(\App\Repositories\ProductRepository::class)->create([
+            'base_sku' => 'MIXED-PAY-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto pago mixto',
+            'price' => 100.00,
+            'purchase_price' => 60.00,
+            'variants' => [
+                ['size' => 'M', 'color' => 'Negro', 'stocks' => [1 => 5]]
+            ]
+        ], 1);
+
+        $response = $this->postJson('/api/sales', [
+            'items' => [['sku' => 'MIXED-PAY-TEST-M-NEGRO', 'quantity' => 1]],
+            'payment_method_id' => 1,
+            'payments' => [
+                ['payment_method_id' => 1, 'amount' => 40.00],
+                ['payment_method_id' => 2, 'amount' => 60.00],
+            ],
+        ]);
+
+        $response->assertCreated();
+        $saleId = $response->json('sale_id');
+        $this->assertDatabaseHas('sales', [
+            'id' => $saleId,
+            'payment_method_name' => 'PAGO MIXTO',
+        ]);
+        $payments = DB::select(
+            'SELECT payment_method_id, payment_method_name, amount FROM sale_payments WHERE sale_id = ? ORDER BY payment_method_id',
+            [$saleId]
+        );
+
+        $this->assertCount(2, $payments);
+        $this->assertEquals(1, $payments[0]->payment_method_id);
+        $this->assertEquals('Efectivo de prueba', $payments[0]->payment_method_name);
+        $this->assertEquals(40.00, (float) $payments[0]->amount);
+        $this->assertEquals(2, $payments[1]->payment_method_id);
+        $this->assertEquals('Tarjeta de prueba', $payments[1]->payment_method_name);
+        $this->assertEquals(60.00, (float) $payments[1]->amount);
+
+        $history = $this->getJson('/api/sales')->assertOk();
+        $history->assertJsonPath('data.0.payment_method_name', 'PAGO MIXTO')
+            ->assertJsonPath('data.0.payments.0.amount', 40)
+            ->assertJsonPath('data.0.payments.1.amount', 60);
+    }
+
+    public function test_pos_rejects_mixed_payment_amounts_that_do_not_match_sale_total()
+    {
+        $seller = User::find(2);
+        $this->actingAs($seller);
+        app(\App\Repositories\ProductRepository::class)->create([
+            'base_sku' => 'MIXED-PAY-INVALID-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto pago mixto inválido',
+            'price' => 100.00,
+            'purchase_price' => 60.00,
+            'variants' => [
+                ['size' => 'M', 'color' => 'Negro', 'stocks' => [1 => 5]]
+            ]
+        ], 1);
+
+        $response = $this->postJson('/api/sales', [
+            'items' => [['sku' => 'MIXED-PAY-INVALID-TEST-M-NEGRO', 'quantity' => 1]],
+            'payment_method_id' => 1,
+            'payments' => [
+                ['payment_method_id' => 1, 'amount' => 40.00],
+                ['payment_method_id' => 1, 'amount' => 59.00],
+            ],
+        ]);
+
+        $response->assertUnprocessable();
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertSame(5, (int) DB::select(
+            "SELECT si.stock FROM store_inventories si INNER JOIN product_variants pv ON pv.id = si.variant_id WHERE pv.sku = ? AND si.store_id = 1",
+            ['MIXED-PAY-INVALID-TEST-M-NEGRO']
+        )[0]->stock);
+    }
+
+    public function test_editing_mixed_payment_sale_requires_matching_updated_breakdown()
+    {
+        $seller = User::find(2);
+        $admin = User::find(1);
+        DB::insert(
+            'INSERT INTO payment_methods (id, name, is_active, created_at, updated_at) VALUES (2, ?, 1, ?, ?)',
+            ['Tarjeta de prueba', now(), now()]
+        );
+
+        $this->actingAs($seller);
+        app(\App\Repositories\ProductRepository::class)->create([
+            'base_sku' => 'MIXED-PAY-EDIT-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto para editar pago mixto',
+            'price' => 100.00,
+            'purchase_price' => 60.00,
+            'variants' => [['size' => 'M', 'color' => 'Negro', 'stocks' => [1 => 5]]]
+        ], 1);
+
+        $saleResponse = $this->postJson('/api/sales', [
+            'items' => [['sku' => 'MIXED-PAY-EDIT-TEST-M-NEGRO', 'quantity' => 1]],
+            'payment_method_id' => 1,
+            'payments' => [
+                ['payment_method_id' => 1, 'amount' => 40.00],
+                ['payment_method_id' => 2, 'amount' => 60.00],
+            ],
+        ])->assertCreated();
+        $saleId = $saleResponse->json('sale_id');
+
+        $this->flushSession();
+        $this->actingAs($admin)->putJson("/api/sales/{$saleId}", [
+            'items' => [['sku' => 'MIXED-PAY-EDIT-TEST-M-NEGRO', 'quantity' => 1, 'price' => 120.00]],
+            'status' => 'EXCHANGED',
+            'customer_name' => 'Cliente ajustado',
+            'payments' => [
+                ['payment_method_id' => 1, 'amount' => 40.00],
+                ['payment_method_id' => 2, 'amount' => 80.00],
+            ],
+        ])->assertOk();
+
+        $this->assertDatabaseHas('sales', [
+            'id' => $saleId,
+            'total' => 120.00,
+            'payment_method_name' => 'PAGO MIXTO',
+        ]);
+        $this->assertEquals([40.00, 80.00], array_map(
+            fn ($payment) => (float) $payment->amount,
+            DB::select('SELECT amount FROM sale_payments WHERE sale_id = ? ORDER BY payment_method_id', [$saleId])
+        ));
+    }
+
+    public function test_editing_mixed_payment_sale_without_new_breakdown_does_not_change_sale_or_stock()
+    {
+        $seller = User::find(2);
+        $admin = User::find(1);
+        DB::insert(
+            'INSERT INTO payment_methods (id, name, is_active, created_at, updated_at) VALUES (2, ?, 1, ?, ?)',
+            ['Tarjeta de prueba', now(), now()]
+        );
+
+        $this->actingAs($seller);
+        app(\App\Repositories\ProductRepository::class)->create([
+            'base_sku' => 'MIXED-PAY-EDIT-INVALID-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto para edición inválida de pago mixto',
+            'price' => 100.00,
+            'purchase_price' => 60.00,
+            'variants' => [['size' => 'M', 'color' => 'Negro', 'stocks' => [1 => 5]]]
+        ], 1);
+
+        $saleResponse = $this->postJson('/api/sales', [
+            'items' => [['sku' => 'MIXED-PAY-EDIT-INVALID-TEST-M-NEGRO', 'quantity' => 1]],
+            'payment_method_id' => 1,
+            'customer_name' => 'Cliente prueba',
+            'payments' => [
+                ['payment_method_id' => 1, 'amount' => 40.00],
+                ['payment_method_id' => 2, 'amount' => 60.00],
+            ],
+        ])->assertCreated();
+        $saleId = $saleResponse->json('sale_id');
+
+        $this->flushSession();
+        $this->actingAs($admin)->putJson("/api/sales/{$saleId}", [
+            'items' => [['sku' => 'MIXED-PAY-EDIT-INVALID-TEST-M-NEGRO', 'quantity' => 1, 'price' => 120.00]],
+            'status' => 'EXCHANGED',
+            'customer_name' => 'Cliente ajustado',
+        ])->assertUnprocessable();
+
+        $this->assertDatabaseHas('sales', ['id' => $saleId, 'total' => 100.00]);
+        $this->assertEquals([40.00, 60.00], array_map(
+            fn ($payment) => (float) $payment->amount,
+            DB::select('SELECT amount FROM sale_payments WHERE sale_id = ? ORDER BY payment_method_id', [$saleId])
+        ));
+        $this->assertDatabaseHas('sales', [
+            'id' => $saleId,
+            'status' => 'COMPLETED',
+            'customer_name' => 'Cliente prueba',
+        ]);
+        $this->assertSame(100.00, (float) DB::select(
+            'SELECT price FROM sale_items WHERE sale_id = ?',
+            [$saleId]
+        )[0]->price);
+        $this->assertSame(4, (int) DB::select(
+            'SELECT si.stock FROM store_inventories si INNER JOIN product_variants pv ON pv.id = si.variant_id WHERE pv.sku = ? AND si.store_id = 1',
+            ['MIXED-PAY-EDIT-INVALID-TEST-M-NEGRO']
+        )[0]->stock);
+    }
+
+    public function test_editing_mixed_payment_sale_with_mismatched_breakdown_rolls_back_every_change()
+    {
+        $seller = User::find(2);
+        $admin = User::find(1);
+        DB::insert(
+            'INSERT INTO payment_methods (id, name, is_active, created_at, updated_at) VALUES (2, ?, 1, ?, ?)',
+            ['Tarjeta de prueba', now(), now()]
+        );
+
+        $this->actingAs($seller);
+        app(\App\Repositories\ProductRepository::class)->create([
+            'base_sku' => 'MIXED-PAY-EDIT-MISMATCH-TEST',
+            'category_id' => 1,
+            'store_id' => 1,
+            'name' => 'Producto para desglose desbalanceado',
+            'price' => 100.00,
+            'purchase_price' => 60.00,
+            'variants' => [['size' => 'M', 'color' => 'Negro', 'stocks' => [1 => 5]]]
+        ], 1);
+
+        $saleResponse = $this->postJson('/api/sales', [
+            'items' => [['sku' => 'MIXED-PAY-EDIT-MISMATCH-TEST-M-NEGRO', 'quantity' => 1]],
+            'payment_method_id' => 1,
+            'customer_name' => 'Cliente prueba',
+            'payments' => [
+                ['payment_method_id' => 1, 'amount' => 40.00],
+                ['payment_method_id' => 2, 'amount' => 60.00],
+            ],
+        ])->assertCreated();
+        $saleId = $saleResponse->json('sale_id');
+
+        $this->flushSession();
+        $this->actingAs($admin)->putJson("/api/sales/{$saleId}", [
+            'items' => [['sku' => 'MIXED-PAY-EDIT-MISMATCH-TEST-M-NEGRO', 'quantity' => 1, 'price' => 120.00]],
+            'status' => 'EXCHANGED',
+            'customer_name' => 'No debe guardarse',
+            'payments' => [
+                ['payment_method_id' => 1, 'amount' => 40.00],
+                ['payment_method_id' => 2, 'amount' => 70.00],
+            ],
+        ])->assertUnprocessable();
+
+        $this->assertDatabaseHas('sales', [
+            'id' => $saleId,
+            'total' => 100.00,
+            'status' => 'COMPLETED',
+            'customer_name' => 'Cliente prueba',
+            'payment_method_name' => 'PAGO MIXTO',
+        ]);
+        $this->assertSame(100.00, (float) DB::select(
+            'SELECT price FROM sale_items WHERE sale_id = ?',
+            [$saleId]
+        )[0]->price);
+        $this->assertEquals([40.00, 60.00], array_map(
+            fn ($payment) => (float) $payment->amount,
+            DB::select('SELECT amount FROM sale_payments WHERE sale_id = ? ORDER BY payment_method_id', [$saleId])
+        ));
+        $this->assertSame(4, (int) DB::select(
+            'SELECT si.stock FROM store_inventories si INNER JOIN product_variants pv ON pv.id = si.variant_id WHERE pv.sku = ? AND si.store_id = 1',
+            ['MIXED-PAY-EDIT-MISMATCH-TEST-M-NEGRO']
+        )[0]->stock);
     }
 
     public function test_product_soft_delete_and_restore()
