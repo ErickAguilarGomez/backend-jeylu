@@ -2,6 +2,7 @@
 
 namespace App\Repositories;
 
+use App\Support\ProductVariantSku;
 use Illuminate\Support\Facades\DB;
 
 class ProductRepository
@@ -460,14 +461,11 @@ class ProductRepository
 
             $usedVariantSkus = [];
             foreach ($data['variants'] as $index => $v) {
-                $rawSize = $v['size'] ?? '';
-                $sizeClean = $rawSize !== ''
-                    ? preg_replace('/[^A-Z0-9]/', '', strtoupper($rawSize))
-                    : 'U';
-                if ($sizeClean === '') {
-                    $sizeClean = 'U';
-                }
-                $variantSku = $data['base_sku'] . '-' . $sizeClean;
+                $variantSku = ProductVariantSku::generate(
+                    $data['base_sku'],
+                    $v['size'] ?? null,
+                    $v['color'] ?? null
+                );
                 if (in_array($variantSku, $usedVariantSkus, true)) {
                     $variantSku .= '-' . ($index + 1);
                 }
@@ -617,12 +615,12 @@ class ProductRepository
 
             $usedVariantSkus = [];
             foreach ($data['variants'] as $index => $v) {
-                $rawSize = $v['size'] ?? '';
-                $sizeClean = preg_replace('/[^A-Z0-9]/', '', strtoupper($rawSize));
-                if ($sizeClean === '') {
-                    $sizeClean = 'VAR' . ($index + 1);
-                }
-                $candidateSku = $newBaseSku . '-' . $sizeClean;
+                $candidateSku = ProductVariantSku::generate(
+                    $newBaseSku,
+                    $v['size'] ?? null,
+                    $v['color'] ?? null,
+                    'VAR' . ($index + 1)
+                );
                 if (in_array($candidateSku, $usedVariantSkus)) {
                     $candidateSku .= '-' . ($index + 1);
                 }

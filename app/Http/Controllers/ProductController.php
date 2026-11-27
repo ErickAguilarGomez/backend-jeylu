@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Repositories\ProductRepository;
 use App\Services\CloudinaryService;
+use App\Support\ProductVariantSku;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -43,13 +44,13 @@ class ProductController extends Controller
 
         foreach ($variants as $index => $variant) {
             $rawSize = (string) ($variant['size'] ?? '');
-            $sizeClean = preg_replace('/[^A-Z0-9]/', '', strtoupper($rawSize));
-
-            if ($sizeClean === '') {
-                $sizeClean = $updating ? 'VAR' . ($index + 1) : 'U';
-            }
-
-            $variantSku = $baseSku . '-' . $sizeClean;
+            $emptySizeFallback = $updating ? 'VAR' . ($index + 1) : 'U';
+            $variantSku = ProductVariantSku::generate(
+                $baseSku,
+                $rawSize,
+                $variant['color'] ?? null,
+                $emptySizeFallback
+            );
             if (in_array($variantSku, $generatedSkus, true)) {
                 $variantSku .= '-' . ($index + 1);
             }
@@ -378,7 +379,7 @@ class ProductController extends Controller
         if ($this->hasOversizedVariantSku($validated['base_sku'], $validated['variants'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'La combinación del SKU base y la talla genera un SKU de variante demasiado largo. Reduce el SKU base o la talla.'
+                'message' => 'La combinación del SKU base, la talla y el color genera un SKU de variante demasiado largo. Reduce esos valores.'
             ], 422);
         }
 
@@ -416,12 +417,8 @@ class ProductController extends Controller
         foreach ($validated['variants'] as $index => $v) {
             $size = $v['size'] ?? null;
             $color = $v['color'] ?? null;
-            
-            $sizeClean = $size !== null && $size !== '' ? preg_replace('/[^A-Z0-9]/', '', strtoupper($size)) : 'U';
-            $variantSku = $validated['base_sku'] . '-' . $sizeClean;
 
             $processedVariants[] = [
-                'sku' => $variantSku,
                 'size' => $size,
                 'color' => $color,
                 'stocks' => $v['stocks']
@@ -524,7 +521,7 @@ class ProductController extends Controller
         if ($this->hasOversizedVariantSku($targetBaseSku, $validated['variants'], true)) {
             return response()->json([
                 'success' => false,
-                'message' => 'La combinación del SKU base y la talla genera un SKU de variante demasiado largo. Reduce el SKU base o la talla.'
+                'message' => 'La combinación del SKU base, la talla y el color genera un SKU de variante demasiado largo. Reduce esos valores.'
             ], 422);
         }
 
@@ -606,14 +603,10 @@ class ProductController extends Controller
         foreach ($validated['variants'] as $index => $v) {
             $size = $v['size'] ?? null;
             $color = $v['color'] ?? null;
-            
-            $sizeClean = $size !== null && $size !== '' ? preg_replace('/[^A-Z0-9]/', '', strtoupper($size)) : 'U';
             $targetBaseSku = !empty($validated['base_sku']) ? $validated['base_sku'] : $baseSku;
-            $variantSku = $targetBaseSku . '-' . $sizeClean;
 
             $processedVariants[] = [
                 'id' => $v['id'] ?? null,
-                'sku' => $variantSku,
                 'size' => $size,
                 'color' => $color,
                 'stocks' => $v['stocks']

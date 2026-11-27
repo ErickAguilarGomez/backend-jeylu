@@ -177,10 +177,27 @@ class EcommerceApiTest extends TestCase
             'price' => 89.90,
             'variants' => [
                 ['size' => 'M', 'color' => 'Negro', 'stocks' => [1 => 10]],
-                ['size' => 'L', 'color' => 'Negro', 'stocks' => [1 => 5]]
+                ['size' => 'L', 'color' => 'Marrón', 'stocks' => [1 => 5]],
+                ['size' => 'M', 'color' => 'Azul', 'stocks' => [1 => 2]],
             ]
         ]);
         $response->assertStatus(201);
+
+        $this->assertDatabaseHas('product_variants', [
+            'sku' => 'TSHIRT-NIKE-M-NEGRO',
+            'size' => 'M',
+            'color' => 'Negro',
+        ]);
+        $this->assertDatabaseHas('product_variants', [
+            'sku' => 'TSHIRT-NIKE-L-MARRON',
+            'size' => 'L',
+            'color' => 'Marrón',
+        ]);
+        $this->assertDatabaseHas('product_variants', [
+            'sku' => 'TSHIRT-NIKE-M-AZUL',
+            'size' => 'M',
+            'color' => 'Azul',
+        ]);
 
         // 2. Get Products /api/products (Public index method)
         $response = $this->getJson('/api/products');
@@ -397,8 +414,8 @@ class EcommerceApiTest extends TestCase
         foreach ($updatedVariants as $variant) {
             $updatedBySize[$variant->size] = $variant;
         }
-        $this->assertSame('MOBILE-UPDATE-TEST-S', $updatedBySize['S']->sku);
-        $this->assertSame('MOBILE-UPDATE-TEST-M', $updatedBySize['M']->sku);
+        $this->assertSame('MOBILE-UPDATE-TEST-S-VERDE', $updatedBySize['S']->sku);
+        $this->assertSame('MOBILE-UPDATE-TEST-M-ROJO', $updatedBySize['M']->sku);
         $this->assertSame('Verde', $updatedBySize['S']->color);
         $this->assertSame('Rojo', $updatedBySize['M']->color);
 
@@ -789,7 +806,7 @@ class EcommerceApiTest extends TestCase
 
         $createResponse = $this->post('/api/products', $payload, ['Accept' => 'application/json']);
         $createResponse->assertUnprocessable()
-            ->assertJsonPath('message', 'La combinación del SKU base y la talla genera un SKU de variante demasiado largo. Reduce el SKU base o la talla.');
+            ->assertJsonPath('message', 'La combinación del SKU base, la talla y el color genera un SKU de variante demasiado largo. Reduce esos valores.');
         $this->assertSame(0, (int) DB::select(
             'SELECT COUNT(*) AS total FROM products WHERE base_sku = ?',
             [$tooLongBaseSku]
@@ -811,7 +828,7 @@ class EcommerceApiTest extends TestCase
         ], 1);
         $variant = DB::select(
             'SELECT id, sku FROM product_variants WHERE sku = ? LIMIT 1',
-            ['SKU-LENGTH-EDIT-TEST-S']
+            ['SKU-LENGTH-EDIT-TEST-S-NEGRO']
         )[0];
 
         $updatePayload = $payload;
@@ -823,7 +840,7 @@ class EcommerceApiTest extends TestCase
             ['Accept' => 'application/json']
         );
         $updateResponse->assertUnprocessable()
-            ->assertJsonPath('message', 'La combinación del SKU base y la talla genera un SKU de variante demasiado largo. Reduce el SKU base o la talla.');
+            ->assertJsonPath('message', 'La combinación del SKU base, la talla y el color genera un SKU de variante demasiado largo. Reduce esos valores.');
 
         $this->assertSame('Producto para conservar', DB::select(
             'SELECT name FROM products WHERE base_sku = ?',
@@ -854,7 +871,7 @@ class EcommerceApiTest extends TestCase
         ], 1);
 
         $saleResponse = $this->postJson('/api/sales', [
-            'items' => [['sku' => 'MOBILE-SOLD-TEST-S', 'quantity' => 1]],
+            'items' => [['sku' => 'MOBILE-SOLD-TEST-S-NEGRO', 'quantity' => 1]],
             'store_id' => 1,
             'payment_method_id' => 1,
         ]);
@@ -875,9 +892,9 @@ class EcommerceApiTest extends TestCase
 
         $response->assertUnprocessable()
             ->assertJsonPath('message', 'No puedes eliminar variantes que ya tienen ventas registradas. Conserva esas variantes y pon su stock en 0.');
-        $this->assertSame('MOBILE-SOLD-TEST-S', DB::select(
+        $this->assertSame('MOBILE-SOLD-TEST-S-NEGRO', DB::select(
             'SELECT sku FROM product_variants WHERE sku = ?',
-            ['MOBILE-SOLD-TEST-S']
+            ['MOBILE-SOLD-TEST-S-NEGRO']
         )[0]->sku);
     }
 
@@ -904,7 +921,7 @@ class EcommerceApiTest extends TestCase
 
         $response = $this->actingAs($admin)->postJson('/api/sales', [
             'items' => [
-                ['sku' => 'SHOE-SAMBA-42', 'quantity' => 2]
+                ['sku' => 'SHOE-SAMBA-42-BLANCO', 'quantity' => 2]
             ],
             'customer_id' => 10,
             'store_id' => 1,
@@ -918,7 +935,7 @@ class EcommerceApiTest extends TestCase
         $this->assertEquals('Juan Perez', $sale->customer_name);
         
         // Verify inventory stock reduced
-        $variant = DB::select("SELECT id FROM product_variants WHERE sku = ? LIMIT 1", ['SHOE-SAMBA-42'])[0];
+        $variant = DB::select("SELECT id FROM product_variants WHERE sku = ? LIMIT 1", ['SHOE-SAMBA-42-BLANCO'])[0];
         $inventory = DB::select("SELECT stock FROM store_inventories WHERE store_id = 1 AND variant_id = ? LIMIT 1", [$variant->id])[0];
         $this->assertEquals(3, $inventory->stock); // 5 - 2 = 3
 
@@ -943,13 +960,13 @@ class EcommerceApiTest extends TestCase
 
         $variant = DB::select(
             'SELECT id FROM product_variants WHERE sku = ?',
-            ['CHECKOUT-QUANTITY-TEST-S']
+            ['CHECKOUT-QUANTITY-TEST-S-NEGRO']
         )[0];
 
         foreach ([-2, 0, 'no-numérico'] as $quantity) {
             $response = $this->postJson('/api/sales/checkout', [
                 'items' => [[
-                    'sku' => 'CHECKOUT-QUANTITY-TEST-S',
+                    'sku' => 'CHECKOUT-QUANTITY-TEST-S-NEGRO',
                     'quantity' => $quantity,
                 ]],
                 'customer_name' => 'Cliente de prueba',
@@ -993,12 +1010,12 @@ class EcommerceApiTest extends TestCase
 
         $variant = DB::select(
             'SELECT id FROM product_variants WHERE sku = ?',
-            ['CHECKOUT-PICKUP-STORE-TEST-M']
+            ['CHECKOUT-PICKUP-STORE-TEST-M-AZUL']
         )[0];
 
         $payload = [
             'items' => [[
-                'sku' => 'CHECKOUT-PICKUP-STORE-TEST-M',
+                'sku' => 'CHECKOUT-PICKUP-STORE-TEST-M-AZUL',
                 'quantity' => 1,
             ]],
             'customer_name' => 'Cliente de prueba',
@@ -1053,12 +1070,12 @@ class EcommerceApiTest extends TestCase
 
         $variant = DB::select(
             'SELECT id FROM product_variants WHERE sku = ?',
-            ['CHECKOUT-NO-PAYMENT-TEST-M']
+            ['CHECKOUT-NO-PAYMENT-TEST-M-AZUL']
         )[0];
 
         $payload = [
             'items' => [[
-                'sku' => 'CHECKOUT-NO-PAYMENT-TEST-M',
+                'sku' => 'CHECKOUT-NO-PAYMENT-TEST-M-AZUL',
                 'quantity' => 1,
             ]],
             'customer_name' => 'Cliente de prueba',
@@ -1118,7 +1135,7 @@ class EcommerceApiTest extends TestCase
         // Make Admin sale
         $this->actingAs($admin)->postJson('/api/sales', [
             'items' => [
-                ['sku' => 'SHOE-SAMBA-42', 'quantity' => 2]
+                ['sku' => 'SHOE-SAMBA-42-BLANCO', 'quantity' => 2]
             ],
             'store_id' => 1,
             'payment_method_id' => 1,
@@ -1598,7 +1615,7 @@ class EcommerceApiTest extends TestCase
         ], 1);
 
         $response = $this->postJson('/api/sales', [
-            'items' => [['sku' => 'MIXED-PAY-TEST-M', 'quantity' => 1]],
+            'items' => [['sku' => 'MIXED-PAY-TEST-M-NEGRO', 'quantity' => 1]],
             'payment_method_id' => 1,
             'payments' => [
                 ['payment_method_id' => 1, 'amount' => 40.00],
@@ -1648,7 +1665,7 @@ class EcommerceApiTest extends TestCase
         ], 1);
 
         $response = $this->postJson('/api/sales', [
-            'items' => [['sku' => 'MIXED-PAY-INVALID-TEST-M', 'quantity' => 1]],
+            'items' => [['sku' => 'MIXED-PAY-INVALID-TEST-M-NEGRO', 'quantity' => 1]],
             'payment_method_id' => 1,
             'payments' => [
                 ['payment_method_id' => 1, 'amount' => 40.00],
@@ -1661,7 +1678,7 @@ class EcommerceApiTest extends TestCase
         $this->assertDatabaseCount('sale_payments', 0);
         $this->assertSame(5, (int) DB::select(
             "SELECT si.stock FROM store_inventories si INNER JOIN product_variants pv ON pv.id = si.variant_id WHERE pv.sku = ? AND si.store_id = 1",
-            ['MIXED-PAY-INVALID-TEST-M']
+            ['MIXED-PAY-INVALID-TEST-M-NEGRO']
         )[0]->stock);
     }
 
@@ -1686,7 +1703,7 @@ class EcommerceApiTest extends TestCase
         ], 1);
 
         $saleResponse = $this->postJson('/api/sales', [
-            'items' => [['sku' => 'MIXED-PAY-EDIT-TEST-M', 'quantity' => 1]],
+            'items' => [['sku' => 'MIXED-PAY-EDIT-TEST-M-NEGRO', 'quantity' => 1]],
             'payment_method_id' => 1,
             'payments' => [
                 ['payment_method_id' => 1, 'amount' => 40.00],
@@ -1697,7 +1714,7 @@ class EcommerceApiTest extends TestCase
 
         $this->flushSession();
         $this->actingAs($admin)->putJson("/api/sales/{$saleId}", [
-            'items' => [['sku' => 'MIXED-PAY-EDIT-TEST-M', 'quantity' => 1, 'price' => 120.00]],
+            'items' => [['sku' => 'MIXED-PAY-EDIT-TEST-M-NEGRO', 'quantity' => 1, 'price' => 120.00]],
             'status' => 'EXCHANGED',
             'customer_name' => 'Cliente ajustado',
             'payments' => [
@@ -1738,7 +1755,7 @@ class EcommerceApiTest extends TestCase
         ], 1);
 
         $saleResponse = $this->postJson('/api/sales', [
-            'items' => [['sku' => 'MIXED-PAY-EDIT-INVALID-TEST-M', 'quantity' => 1]],
+            'items' => [['sku' => 'MIXED-PAY-EDIT-INVALID-TEST-M-NEGRO', 'quantity' => 1]],
             'payment_method_id' => 1,
             'customer_name' => 'Cliente prueba',
             'payments' => [
@@ -1750,7 +1767,7 @@ class EcommerceApiTest extends TestCase
 
         $this->flushSession();
         $this->actingAs($admin)->putJson("/api/sales/{$saleId}", [
-            'items' => [['sku' => 'MIXED-PAY-EDIT-INVALID-TEST-M', 'quantity' => 1, 'price' => 120.00]],
+            'items' => [['sku' => 'MIXED-PAY-EDIT-INVALID-TEST-M-NEGRO', 'quantity' => 1, 'price' => 120.00]],
             'status' => 'EXCHANGED',
             'customer_name' => 'Cliente ajustado',
         ])->assertUnprocessable();
@@ -1771,7 +1788,7 @@ class EcommerceApiTest extends TestCase
         )[0]->price);
         $this->assertSame(4, (int) DB::select(
             'SELECT si.stock FROM store_inventories si INNER JOIN product_variants pv ON pv.id = si.variant_id WHERE pv.sku = ? AND si.store_id = 1',
-            ['MIXED-PAY-EDIT-INVALID-TEST-M']
+            ['MIXED-PAY-EDIT-INVALID-TEST-M-NEGRO']
         )[0]->stock);
     }
 
@@ -1796,7 +1813,7 @@ class EcommerceApiTest extends TestCase
         ], 1);
 
         $saleResponse = $this->postJson('/api/sales', [
-            'items' => [['sku' => 'MIXED-PAY-EDIT-MISMATCH-TEST-M', 'quantity' => 1]],
+            'items' => [['sku' => 'MIXED-PAY-EDIT-MISMATCH-TEST-M-NEGRO', 'quantity' => 1]],
             'payment_method_id' => 1,
             'customer_name' => 'Cliente prueba',
             'payments' => [
@@ -1808,7 +1825,7 @@ class EcommerceApiTest extends TestCase
 
         $this->flushSession();
         $this->actingAs($admin)->putJson("/api/sales/{$saleId}", [
-            'items' => [['sku' => 'MIXED-PAY-EDIT-MISMATCH-TEST-M', 'quantity' => 1, 'price' => 120.00]],
+            'items' => [['sku' => 'MIXED-PAY-EDIT-MISMATCH-TEST-M-NEGRO', 'quantity' => 1, 'price' => 120.00]],
             'status' => 'EXCHANGED',
             'customer_name' => 'No debe guardarse',
             'payments' => [
@@ -1834,7 +1851,7 @@ class EcommerceApiTest extends TestCase
         ));
         $this->assertSame(4, (int) DB::select(
             'SELECT si.stock FROM store_inventories si INNER JOIN product_variants pv ON pv.id = si.variant_id WHERE pv.sku = ? AND si.store_id = 1',
-            ['MIXED-PAY-EDIT-MISMATCH-TEST-M']
+            ['MIXED-PAY-EDIT-MISMATCH-TEST-M-NEGRO']
         )[0]->stock);
     }
 
@@ -1897,7 +1914,7 @@ class EcommerceApiTest extends TestCase
             ]
         ], 1);
 
-        $variant = DB::select("SELECT id, sku FROM product_variants WHERE sku = 'EDIT-TEST-M' LIMIT 1")[0];
+        $variant = DB::select("SELECT id, sku FROM product_variants WHERE sku = 'EDIT-TEST-M-GRIS' LIMIT 1")[0];
 
         // 1. Process initial sale: 3 units (stock: 10 -> 7)
         $response = $this->postJson('/api/sales', [
